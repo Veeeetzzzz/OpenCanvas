@@ -1,2 +1,4 @@
-# OpenCanvas - Free & Open sSource Note Taking/Drawing Pad
- 
+# OpenCanvas - Take notes, sketch, journal and collaborate all in one free app.
+
+## Features
+
