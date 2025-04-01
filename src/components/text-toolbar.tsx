@@ -63,7 +63,7 @@ export function TextToolbar({
   return (
     <div
       ref={toolbarRef}
-      className="absolute bg-background border rounded-lg shadow-lg w-64 select-none"
+      className="absolute bg-background border rounded-md shadow-lg select-none z-50"
       style={{
         left: position.x,
         top: position.y,
@@ -74,45 +74,46 @@ export function TextToolbar({
       onMouseLeave={handleMouseUp}
     >
       <div
-        className="flex items-center gap-2 p-2 border-b bg-muted/50 rounded-t-lg cursor-grab"
+        className="flex items-center gap-2 px-3 py-1.5 bg-muted/50 rounded-t-md cursor-grab border-b"
         onMouseDown={handleMouseDown}
       >
         <GripVertical className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium">Text Properties</span>
+        <span className="text-sm font-medium">Text Tool Options</span>
       </div>
       
-      <div className="p-4 space-y-4">
-      <div className="space-y-2">
-        <Label>Font</Label>
-        <select 
-          className="w-full p-2 border rounded-md bg-background"
-          value={font}
-          onChange={(e) => onFontChange(e.target.value)}
-        >
-          {fonts.map(f => (
-            <option key={f} value={f}>{f}</option>
-          ))}
-        </select>
-      </div>
-      
-      <div className="space-y-2">
-        <Label>Font Size: {fontSize}px</Label>
-        <Slider
-          value={[fontSize]}
-          onValueChange={(value) => onFontSizeChange(value[0])}
-          min={8}
-          max={72}
-          step={1}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label>Color</Label>
-        <div className="flex items-center gap-2">
-          <ColorPicker color={color} onChange={onColorChange} />
-          <span className="text-sm text-muted-foreground">{color}</span>
+      <div className="px-3 py-2 flex items-center gap-6">
+        <div className="flex items-center gap-2 min-w-[140px]">
+          <Label className="text-sm">Font:</Label>
+          <select 
+            className="flex-1 h-8 px-2 text-sm border rounded bg-background"
+            value={font}
+            onChange={(e) => onFontChange(e.target.value)}
+          >
+            {fonts.map(f => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
         </div>
-      </div>
+        
+        <div className="flex items-center gap-2">
+          <Label className="text-sm whitespace-nowrap">Size: {fontSize}px</Label>
+          <Slider
+            className="w-24"
+            value={[fontSize]}
+            onValueChange={(value) => onFontSizeChange(value[0])}
+            min={8}
+            max={72}
+            step={1}
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Label className="text-sm">Color:</Label>
+          <div className="flex items-center gap-1">
+            <ColorPicker color={color} onChange={onColorChange} />
+            <span className="text-xs text-muted-foreground font-mono">{color}</span>
+          </div>
+        </div>
       </div>
     </div>
   )

@@ -19,8 +19,9 @@ export function Canvas({ tool, color, onColorChange, onStateChange }: CanvasProp
   const [fontSize, setFontSize] = useState(16)
   const [font, setFont] = useState("Arial")
   const [textPosition, setTextPosition] = useState<{ x: number; y: number } | null>(null)
-  const [isTyping, setIsTyping] = useState(false)
+  const [imageArea, setImageArea] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null)
   const { toast } = useToast()
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const input = document.createElement('input')
@@ -65,12 +66,27 @@ export function Canvas({ tool, color, onColorChange, onStateChange }: CanvasProp
     }
   }, [])
 
+  // Reset text position when tool changes
+  useEffect(() => {
+    if (tool !== 'text') {
+      setTextPosition(null)
+    }
+  }, [tool])
+
   const startDrawing = (e: React.MouseEvent) => {
-    if (tool === "hand" || tool === "image" || isTyping) return
+    if (tool === "hand") return
     
     if (tool === "text" && context) {
       setTextPosition({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY })
-      setIsTyping(true)
+      setTimeout(() => inputRef.current?.focus(), 0)
+      return
+    }
+
+    if (tool === "image") {
+      setImageArea({
+        start: { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY },
+        end: { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }
+      })
       return
     }
     
@@ -85,7 +101,15 @@ export function Canvas({ tool, color, onColorChange, onStateChange }: CanvasProp
   }
 
   const draw = (e: React.MouseEvent) => {
-    if (!isDrawing || !context || !currentAction || tool === "hand" || tool === "text" || tool === "image" || isTyping) return
+    if (tool === "image" && imageArea) {
+      setImageArea({
+        ...imageArea,
+        end: { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }
+      })
+      return
+    }
+
+    if (!isDrawing || !context || !currentAction || tool === "hand" || tool === "text") return
     
     const newPoint = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }
     const updatedAction = {
@@ -113,7 +137,11 @@ export function Canvas({ tool, color, onColorChange, onStateChange }: CanvasProp
   }
 
   const stopDrawing = () => {
-    if (isTyping) return
+    if (tool === "image" && imageArea && imageInput) {
+      imageInput.click()
+      setImageArea(null)
+      return
+    }
     
     if (currentAction) {
       onStateChange({
@@ -125,25 +153,27 @@ export function Canvas({ tool, color, onColorChange, onStateChange }: CanvasProp
     setCurrentAction(null)
   }
 
-  const handleToolClick = () => {
-    if (tool === "image" && imageInput) {
-      imageInput.click()
-    }
-  }
-
   const handleTextInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && context && textPosition) {
+    if (e.key === 'Enter' && context && textPosition) {
       const text = (e.target as HTMLInputElement).value
-      if (text.trim()) {
+      if (text) {
         context.font = `${fontSize}px ${font}`
         context.fillStyle = color
         context.fillText(text, textPosition.x, textPosition.y)
-        setTextPosition(null)
-        setIsTyping(false)
+        
         onStateChange({
-          actions: [],
+          actions: [{
+            tool: 'text',
+            points: [{ x: textPosition.x, y: textPosition.y }],
+            color,
+            lineWidth: fontSize,
+            text,
+            font
+          }],
           currentAction: null
         })
+        
+        setTextPosition(null)
         ;(e.target as HTMLInputElement).value = ''
       }
     }
@@ -151,7 +181,6 @@ export function Canvas({ tool, color, onColorChange, onStateChange }: CanvasProp
 
   const handleBlur = () => {
     setTextPosition(null)
-    setIsTyping(false)
   }
 
   return (
@@ -172,24 +201,38 @@ export function Canvas({ tool, color, onColorChange, onStateChange }: CanvasProp
         onMouseMove={draw}
         onMouseUp={stopDrawing}
         onMouseOut={stopDrawing}
-        onClick={handleToolClick}
       />
+      {imageArea && (
+        <div
+          className="absolute border-2 border-primary bg-primary/10"
+          style={{
+            left: Math.min(imageArea.start.x, imageArea.end.x),
+            top: Math.min(imageArea.start.y, imageArea.end.y),
+            width: Math.abs(imageArea.end.x - imageArea.start.x),
+            height: Math.abs(imageArea.end.y - imageArea.start.y),
+            pointerEvents: 'none'
+          }}
+        />
+      )}
       {textPosition && (
         <input
+          ref={inputRef}
           type="text"
-          className="absolute bg-transparent border-none outline-none p-1"
+          className="absolute bg-transparent border-none outline-none px-1 py-0.5 z-50"
           style={{
             left: textPosition.x,
-            top: textPosition.y - fontSize/2,
+            top: textPosition.y - fontSize,
             font: `${fontSize}px ${font}`,
             color: color,
             minWidth: '200px',
-            caretColor: color
+            caretColor: color,
+            pointerEvents: 'all',
+            background: 'rgba(128, 128, 128, 0.1)'
           }}
           autoFocus
           onKeyDown={handleTextInput}
           onBlur={handleBlur}
-          placeholder="Type and press Enter to add text..."
+          placeholder="Type and press Enter..."
         />
       )}
     </div>

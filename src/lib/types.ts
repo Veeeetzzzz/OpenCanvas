@@ -4,6 +4,8 @@ export type DrawingAction = {
   points: { x: number; y: number }[];
   color: string;
   lineWidth: number;
+  text?: string;
+  font?: string;
 };
 
 export type DrawingState = {
