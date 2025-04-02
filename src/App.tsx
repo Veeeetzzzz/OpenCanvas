@@ -1,5 +1,6 @@
 import { ThemeProvider } from '@/components/theme-provider';
 import { ModeToggle } from '@/components/mode-toggle';
+import { Button } from '@/components/ui/button';
 import { Canvas } from '@/components/canvas';
 import { Toolbar } from '@/components/toolbar';
 import { Sidebar } from '@/components/sidebar';
@@ -39,6 +40,7 @@ function App() {
             <div className="flex items-center justify-between p-4 border-b">
               <h1 className="text-2xl font-semibold">Flow</h1>
               <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled>Share</Button>
                 <ModeToggle />
               </div>
             </div>
