@@ -61,6 +61,8 @@ function App() {
                   color={color}
                   onColorChange={setColor}
                   onStateChange={handleStateChange}
+                  history={history}
+                  historyIndex={historyIndex}
                 />
               </div>
             </div>
