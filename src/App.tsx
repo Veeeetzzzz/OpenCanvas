@@ -60,6 +60,7 @@ function App() {
                   tool={tool}
                   color={color}
                   onColorChange={setColor}
+                  onToolChange={setTool}
                   onStateChange={handleStateChange}
                   history={history}
                   historyIndex={historyIndex}
