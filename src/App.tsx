@@ -5,14 +5,15 @@ import { Canvas } from '@/components/canvas';
 import { Toolbar } from '@/components/toolbar';
 import { Sidebar } from '@/components/sidebar';
 import { cn } from '@/lib/utils';
-import { Tool, DrawingState } from '@/lib/types';
-import { useState } from 'react';
+import { Tool, DrawingState, ImageElement, DrawingAction } from '@/lib/types';
+import { useState, useRef, useEffect } from 'react';
 
 function App() {
   const [tool, setTool] = useState<Tool>('pencil');
   const [color, setColor] = useState('#000000');
   const [history, setHistory] = useState<DrawingState[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const fileInputRef = useRef<HTMLInputElement>(null); // Ref for hidden file input
 
   const handleStateChange = (newState: DrawingState) => {
     const newHistory = [...history.slice(0, historyIndex + 1), newState];
@@ -31,8 +32,72 @@ function App() {
       setHistoryIndex(historyIndex + 1);
     }
   };
+
+  // Trigger file input when 'image' tool is selected
+  useEffect(() => {
+    if (tool === 'image' && fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  }, [tool]);
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const imageUrl = e.target?.result as string;
+        if (imageUrl) {
+          // Create a default image element (adjust position/size as needed)
+          const imageElement: ImageElement = {
+            url: imageUrl,
+            position: { x: 100, y: 100 }, // Example starting position
+            width: 200, // Example starting width
+            height: 150, // Example starting height
+          };
+
+          // Create a drawing action for the image
+          const imageAction: DrawingAction = {
+            tool: 'image',
+            points: [], // No points needed for image placement
+            color: '', // Color not relevant for image
+            lineWidth: 0, // Line width not relevant
+            imageElement: imageElement,
+          };
+
+          // Get the current state or initialize if history is empty
+          const currentState = historyIndex >= 0 ? history[historyIndex] : { actions: [], currentAction: null };
+          const newState: DrawingState = {
+            ...currentState,
+            actions: [...currentState.actions, imageAction], // Add the new image action
+            currentAction: null, // Clear any ongoing action
+          };
+
+          handleStateChange(newState);
+          setTool('hand'); // Switch to hand tool after placing image
+        }
+      };
+      reader.readAsDataURL(file);
+
+      // Reset file input value to allow uploading the same file again
+       if (fileInputRef.current) {
+         fileInputRef.current.value = '';
+       }
+    } else {
+      // If no file was selected (e.g., user cancelled), switch back to previous tool or default
+      setTool('hand'); // Or potentially track the previous tool
+    }
+  };
+
   return (
     <ThemeProvider defaultTheme="light" storageKey="doodle-theme">
+      {/* Hidden file input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept="image/*"
+        style={{ display: 'none' }}
+      />
       <div className="min-h-screen bg-background">
         <div className="flex h-screen">
           <Sidebar />

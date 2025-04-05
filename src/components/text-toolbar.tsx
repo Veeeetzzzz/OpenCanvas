@@ -1,7 +1,7 @@
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { ColorPicker } from "@/components/color-picker"
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, forwardRef } from "react"
 import { GripVertical } from "lucide-react"
 
 interface TextToolbarProps {
@@ -23,21 +23,21 @@ const fonts = [
   "Verdana"
 ]
 
-export function TextToolbar({
-  show,
-  color,
-  onColorChange,
-  fontSize,
-  onFontSizeChange,
-  font,
-  onFontChange
-}: TextToolbarProps) {
+export const TextToolbar = forwardRef<HTMLDivElement, TextToolbarProps>((
+  {
+    show,
+    color,
+    onColorChange,
+    fontSize,
+    onFontSizeChange,
+    font,
+    onFontChange
+  },
+  ref
+) => {
   const [position, setPosition] = useState({ x: 20, y: 20 })
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
-  const toolbarRef = useRef<HTMLDivElement>(null)
-
-  if (!show) return null
 
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true)
@@ -62,12 +62,13 @@ export function TextToolbar({
 
   return (
     <div
-      ref={toolbarRef}
+      ref={ref}
       className="absolute bg-background border rounded-md shadow-lg select-none z-50"
       style={{
         left: position.x,
         top: position.y,
-        cursor: isDragging ? 'grabbing' : 'default'
+        cursor: isDragging ? 'grabbing' : 'default',
+        display: show ? 'block' : 'none'
       }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -117,4 +118,6 @@ export function TextToolbar({
       </div>
     </div>
   )
-}
+})
+
+TextToolbar.displayName = 'TextToolbar'
