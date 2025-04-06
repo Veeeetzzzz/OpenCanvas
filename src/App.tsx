@@ -8,29 +8,165 @@ import { cn } from '@/lib/utils';
 import { Tool, DrawingState, ImageElement, DrawingAction } from '@/lib/types';
 import { useState, useRef, useEffect } from 'react';
 
+// Define the structure for a single document
+interface Document {
+  id: string;
+  name: string;
+  history: DrawingState[];
+  historyIndex: number;
+}
+
 function App() {
   const [tool, setTool] = useState<Tool>('pencil');
   const [color, setColor] = useState('#000000');
-  const [history, setHistory] = useState<DrawingState[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  // State to hold all documents
+  const [documents, setDocuments] = useState<Document[]>([]);
+  // State to track the ID of the currently active document
+  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); // Ref for hidden file input
 
+  // Find the current document based on the ID
+  const currentDocument = documents.find(doc => doc.id === currentDocumentId);
+  // Derive current history and index from the current document
+  const currentHistory = currentDocument?.history ?? [];
+  const currentHistoryIndex = currentDocument?.historyIndex ?? -1;
+
+  // Effect to load documents from sessionStorage on mount
+  useEffect(() => {
+    const savedDocs = sessionStorage.getItem('openCanvasDocuments');
+    const savedCurrentId = sessionStorage.getItem('openCanvasCurrentId');
+    if (savedDocs) {
+      try {
+        const parsedDocs: Document[] = JSON.parse(savedDocs);
+        if (Array.isArray(parsedDocs) && parsedDocs.length > 0) {
+          setDocuments(parsedDocs);
+          // Restore the last active document ID, or default to the first one
+          setCurrentDocumentId(savedCurrentId ?? parsedDocs[0]?.id ?? null);
+          return; // Exit early if loaded successfully
+        }
+      } catch (error) {
+        console.error("Failed to parse documents from sessionStorage:", error);
+        // Clear potentially corrupted data
+        sessionStorage.removeItem('openCanvasDocuments');
+        sessionStorage.removeItem('openCanvasCurrentId');
+      }
+    }
+    // If no saved data or parsing failed, initialize with one new document
+    handleNewDocument();
+  }, []); // Empty dependency array ensures this runs only once on mount
+
+  // Effect to save documents and current ID to sessionStorage whenever they change
+  useEffect(() => {
+    if (documents.length > 0 && currentDocumentId) {
+        sessionStorage.setItem('openCanvasDocuments', JSON.stringify(documents));
+        sessionStorage.setItem('openCanvasCurrentId', currentDocumentId);
+    }
+  }, [documents, currentDocumentId]);
+
+
+  // Update state change handler to modify the correct document
   const handleStateChange = (newState: DrawingState) => {
-    const newHistory = [...history.slice(0, historyIndex + 1), newState];
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
+    if (!currentDocumentId) return; // Don't do anything if no document is active
+
+    const nextHistory = [...currentHistory.slice(0, currentHistoryIndex + 1), newState];
+    const nextHistoryIndex = nextHistory.length - 1;
+
+    setDocuments(docs =>
+      docs.map(doc =>
+        doc.id === currentDocumentId
+          ? { ...doc, history: nextHistory, historyIndex: nextHistoryIndex }
+          : doc
+      )
+    );
   };
 
+  // Update undo handler
   const handleUndo = () => {
-    if (historyIndex > 0) {
-      setHistoryIndex(historyIndex - 1);
+    if (!currentDocumentId || currentHistoryIndex <= 0) return;
+
+    setDocuments(docs =>
+      docs.map(doc =>
+        doc.id === currentDocumentId
+          ? { ...doc, historyIndex: currentHistoryIndex - 1 }
+          : doc
+      )
+    );
+  };
+
+  // Update redo handler
+  const handleRedo = () => {
+    if (!currentDocumentId || currentHistoryIndex >= currentHistory.length - 1) return;
+
+    setDocuments(docs =>
+      docs.map(doc =>
+        doc.id === currentDocumentId
+          ? { ...doc, historyIndex: currentHistoryIndex + 1 }
+          : doc
+      )
+    );
+  };
+
+  // Function to switch the active document
+  const handleSwitchDocument = (docId: string) => {
+    setCurrentDocumentId(docId);
+  };
+
+   // Function to create a new document
+  const handleNewDocument = () => {
+    const newDocId = `doc_${Date.now()}`; // Simple unique ID
+    // Determine a simple name for the new document
+    const newDocName = `Document ${documents.length + 1}`;
+    const newDocument: Document = {
+      id: newDocId,
+      name: newDocName,
+      history: [],
+      historyIndex: -1,
+    };
+    setDocuments(docs => [...docs, newDocument]);
+    setCurrentDocumentId(newDocId);
+    setTool('pencil'); // Reset tool for new document
+    setColor('#000000'); // Reset color
+  };
+
+  // Function to delete a document
+  const handleDeleteDocument = (docId: string) => {
+    // Prevent deleting the last document
+    if (documents.length <= 1) return;
+
+    setDocuments(docs => docs.filter(doc => doc.id !== docId));
+
+    // If the deleted document was the current one, switch to another
+    if (currentDocumentId === docId) {
+        const remainingDocs = documents.filter(doc => doc.id !== docId);
+        setCurrentDocumentId(remainingDocs[0]?.id ?? null);
     }
   };
 
-  const handleRedo = () => {
-    if (historyIndex < history.length - 1) {
-      setHistoryIndex(historyIndex + 1);
-    }
+  // Function to copy/duplicate a document
+  const handleCopyDocument = (docId: string) => {
+    const docToCopy = documents.find(doc => doc.id === docId);
+    if (!docToCopy) return;
+
+    const newDocId = `doc_${Date.now()}_copy`;
+    const newDocName = `${docToCopy.name} Copy`;
+    const newDocument: Document = {
+      ...docToCopy, // Copy properties like historyIndex
+      id: newDocId,
+      name: newDocName,
+      // Deep copy history to prevent shared state issues
+      history: JSON.parse(JSON.stringify(docToCopy.history)),
+    };
+
+    // Insert the new document right after the original one
+    const originalIndex = documents.findIndex(doc => doc.id === docId);
+    setDocuments(docs => [
+      ...docs.slice(0, originalIndex + 1),
+      newDocument,
+      ...docs.slice(originalIndex + 1),
+    ]);
+
+    // Optionally, switch to the new copy immediately
+    // setCurrentDocumentId(newDocId);
   };
 
   // Trigger file input when 'image' tool is selected
@@ -65,7 +201,7 @@ function App() {
           };
 
           // Get the current state or initialize if history is empty
-          const currentState = historyIndex >= 0 ? history[historyIndex] : { actions: [], currentAction: null };
+          const currentState = currentHistoryIndex >= 0 ? currentHistory[currentHistoryIndex] : { actions: [], currentAction: null };
           const newState: DrawingState = {
             ...currentState,
             actions: [...currentState.actions, imageAction], // Add the new image action
@@ -100,7 +236,14 @@ function App() {
       />
       <div className="min-h-screen bg-background">
         <div className="flex h-screen">
-          <Sidebar />
+          <Sidebar
+            documents={documents}
+            currentDocumentId={currentDocumentId}
+            onNewDocument={handleNewDocument}
+            onSwitchDocument={handleSwitchDocument}
+            onDeleteDocument={handleDeleteDocument}
+            onCopyDocument={handleCopyDocument}
+          />
           <main className="flex-1 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b">
               <h1 className="text-2xl font-semibold">Flow</h1>
@@ -117,8 +260,8 @@ function App() {
                 onColorChange={setColor}
                 onUndo={handleUndo}
                 onRedo={handleRedo}
-                canUndo={historyIndex > 0}
-                canRedo={historyIndex < history.length - 1}
+                canUndo={currentHistoryIndex > 0}
+                canRedo={currentHistoryIndex < currentHistory.length - 1}
               />
               <div className={cn("flex-1 h-full relative bg-muted/30")}>
                 <Canvas
@@ -127,8 +270,8 @@ function App() {
                   onColorChange={setColor}
                   onToolChange={setTool}
                   onStateChange={handleStateChange}
-                  history={history}
-                  historyIndex={historyIndex}
+                  history={currentHistory}
+                  historyIndex={currentHistoryIndex}
                 />
               </div>
             </div>
