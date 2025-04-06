@@ -40,7 +40,6 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
   const [selectedText, setSelectedText] = useState<DrawingAction | null>(null)
   const [selectedTextIndex, setSelectedTextIndex] = useState<number | null>(null)
   const [activeTextInput, setActiveTextInput] = useState<{ position: Point; initialValue: string; width?: number; height?: number } | null>(null)
-  const [contextMenuPosition, setContextMenuPosition] = useState<Point | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
 
   // --- Helper Function to Save Text --- 
@@ -690,8 +689,6 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
   const handlePasteImage = () => {
     if (!clipboardImage || !canvasRef.current || !context) return;
 
-    const canvasWidth = canvasRef.current.width;
-    const canvasHeight = canvasRef.current.height;
     const pastePosition = { x: 20, y: 20 }; 
 
     const newImageElement: ImageElement = {
@@ -712,7 +709,6 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
     }];
     onStateChange({ actions: newActions, currentAction: null });
     toast({ title: "Image pasted" });
-    setContextMenuPosition(null); // Clear position after pasting
   }
 
   const handleDeleteImage = () => {
@@ -757,7 +753,6 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
     e.preventDefault(); // Always prevent default browser context menu
     saveActiveText(); // Save any active text first
     const point = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
-    setContextMenuPosition(point); // <<<< STORE MOUSE POSITION
 
     // Check if right-clicking on an existing image or text to select it
     const imageHit = hitTestImage(point);
