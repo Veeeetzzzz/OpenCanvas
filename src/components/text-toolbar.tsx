@@ -1,7 +1,7 @@
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { ColorPicker } from "@/components/color-picker"
-import { useState, useRef, forwardRef } from "react"
+import { useState, forwardRef } from "react"
 import { GripVertical } from "lucide-react"
 
 interface TextToolbarProps {

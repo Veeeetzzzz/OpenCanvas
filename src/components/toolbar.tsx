@@ -3,7 +3,6 @@ import { Separator } from "@/components/ui/separator"
 import { ColorPicker } from "@/components/color-picker"
 import { Tool } from "@/lib/types"
 import {
-  Palette,
   Pencil,
   Eraser,
   Type,

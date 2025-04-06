@@ -111,13 +111,6 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
   const redrawCanvas = () => {
     if (!context || !canvasRef.current) return;
     
-    const currentGlobalCompositeOperation = context.globalCompositeOperation;
-    const currentStrokeStyle = context.strokeStyle;
-    const currentLineWidth = context.lineWidth;
-    const currentFillStyle = context.fillStyle;
-    const currentFont = context.font;
-    const currentTextBaseline = context.textBaseline;
-    
     context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     
     // Draw actions from the current point in history
@@ -203,10 +196,6 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
     }
 
     context.restore();
-    
-    // Restore the original context state if needed elsewhere, though save/restore per element is safer
-    // context.globalCompositeOperation = currentGlobalCompositeOperation; // Probably not needed now
-    // ... restore other states ...
   }
 
   // --- Effects --- 
@@ -596,10 +585,16 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
     }
   };
 
-  const stopDrawing = (e?: React.MouseEvent) => { 
-     // saveActiveText(); // Don't save text on mouse up, only on explicit actions or click-outside
+  const stopDrawing = (_e?: React.MouseEvent) => { 
+    if (!isDrawing && !isResizing && !isDragging) return; // Exit if nothing was happening
 
-    if (tool === 'hand' && (isDragging || isResizing) && selectedImage !== null && selectedImageIndex !== null) {
+    if (isDrawing && currentAction) {
+      const currentState = history[historyIndex] ?? { actions: [], currentAction: null };
+      const newActions = [...currentState.actions, currentAction];
+      onStateChange({ actions: newActions, currentAction: null });
+      setCurrentAction(null);
+      setIsDrawing(false);
+    } else if (tool === 'hand' && (isDragging || isResizing) && selectedImage !== null && selectedImageIndex !== null) {
       const currentState = history[historyIndex];
       if (currentState && selectedImageIndex >= 0 && selectedImageIndex < currentState.actions.length) {
         const newAction = selectedImage; // Contains the final position/size from the draw handler
@@ -693,40 +688,31 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
   }
 
   const handlePasteImage = () => {
-    if (clipboardImage?.imageElement && contextMenuPosition) {
-      
-      const pastePosition: Point = {
-        x: contextMenuPosition.x - clipboardImage.imageElement.width / 2, // Center image on cursor
-        y: contextMenuPosition.y - clipboardImage.imageElement.height / 2
+    if (!clipboardImage || !canvasRef.current || !context) return;
+
+    const canvasWidth = canvasRef.current.width;
+    const canvasHeight = canvasRef.current.height;
+    const pastePosition = { x: 20, y: 20 }; 
+
+    const newImageElement: ImageElement = {
+      ...clipboardImage.imageElement!,
+      position: {
+        x: pastePosition.x - clipboardImage.imageElement!.width / 2,
+        y: pastePosition.y - clipboardImage.imageElement!.height / 2
       }
+    };
 
-      const newImageAction: DrawingAction = {
-        ...clipboardImage,
-        // Create a *new* element object with updated position
-        imageElement: {
-          ...clipboardImage.imageElement,
-          position: pastePosition
-        }
-      };
-
-      const currentHistoryState = history[historyIndex] ?? { actions: [], currentAction: null };
-      const newActions = [...currentHistoryState.actions, newImageAction];
-      onStateChange({ actions: newActions, currentAction: null });
-      toast({ title: "Image pasted" });
-      setContextMenuPosition(null); // Clear position after pasting
-    } else {
-      // Fallback or error? 
-      console.error("Paste called without clipboard image or context menu position.");
-      // Optionally paste in center as before?
-       const canvasWidth = canvasRef.current?.width ?? 500;
-       const canvasHeight = canvasRef.current?.height ?? 500;
-       const centerPosition: Point = {
-           x: canvasWidth / 2 - (clipboardImage?.imageElement?.width ?? 100) / 2,
-           y: canvasHeight / 2 - (clipboardImage?.imageElement?.height ?? 100) / 2
-       };
-       // ... duplicate paste logic with centerPosition if needed ...
-       // For now, just log error
-    }
+    const currentHistoryState = history[historyIndex] ?? { actions: [], currentAction: null };
+    const newActions = [...currentHistoryState.actions, {
+      tool: 'image' as Tool,
+      points: [],
+      color: clipboardImage.color,
+      lineWidth: clipboardImage.lineWidth,
+      imageElement: newImageElement
+    }];
+    onStateChange({ actions: newActions, currentAction: null });
+    toast({ title: "Image pasted" });
+    setContextMenuPosition(null); // Clear position after pasting
   }
 
   const handleDeleteImage = () => {
@@ -796,9 +782,12 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
   const handleDoubleClick = (e: React.MouseEvent) => {
     if (tool !== 'hand') return; // Only allow editing with hand tool
     saveActiveText(); // Save any existing text first
-    const point = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+    const currentState = history[historyIndex];
+    if (!currentState) return;
+    const clickPos = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
     
-    const textHit = textHitTest(point);
+    // Check if we double-clicked on existing text to re-edit
+    const textHit = textHitTest(clickPos);
     if (textHit?.action.textElement) {
         // Start editing the hit text element
         setActiveTextInput({ 
@@ -807,29 +796,29 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
             // Optional: Consider setting width/height if needed for input sizing
         });
         setSelectedText(textHit.action); // Keep it selected visually
-        setSelectedImage(null);
-        setSelectedImageIndex(null);
+       setSelectedImage(null);
+       setSelectedImageIndex(null);
         // Remove the action being edited from the *current* state to prevent redraw overlap
-        const currentState = history[historyIndex];
-        if (currentState) {
-           const actionsWithoutEditingText = currentState.actions.filter(a => a !== textHit.action);
+        // const currentState = history[historyIndex]; // Already defined above
+        // if (currentState) { // Already checked above
+           // const actionsWithoutEditingText = currentState.actions.filter(a => a !== textHit.action); // TS6133 unused
            // This temporary state update might be complex with undo/redo.
            // A simpler approach might be to just rely on the input overlaying.
            // Let's avoid modifying history directly here for simplicity.
            // onStateChange({ ...currentState, actions: actionsWithoutEditingText });
+        // }
+       setTimeout(() => inputRef.current?.focus(), 0); // Focus the input after render
+     } else {
+        // Double click on image or empty space - do nothing for now?
+        // Maybe select image if double clicking on it?
+        const imageHit = hitTestImage(clickPos); // Use the new image hit test
+        if (imageHit) {
+           setSelectedImage(imageHit.action);
+           setSelectedImageIndex(imageHit.index);
+           setSelectedText(null);
         }
-        setTimeout(() => inputRef.current?.focus(), 0); // Focus the input after render
-    } else {
-       // Double click on image or empty space - do nothing for now?
-       // Maybe select image if double clicking on it?
-       const imageHit = hitTestImage(point); // Use the new image hit test
-       if (imageHit) {
-          setSelectedImage(imageHit.action);
-          setSelectedImageIndex(imageHit.index);
-          setSelectedText(null);
-       }
-    }
-  };
+     }
+   };
 
   // --- JSX Rendering --- 
 
