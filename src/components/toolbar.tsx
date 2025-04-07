@@ -11,6 +11,12 @@ import {
   Undo,
   Redo,
 } from "lucide-react"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 interface ToolbarProps {
   tool: Tool;
@@ -21,6 +27,7 @@ interface ToolbarProps {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  showTooltips?: boolean;
 }
 
 export function Toolbar({
@@ -32,70 +39,116 @@ export function Toolbar({
   onRedo,
   canUndo,
   canRedo,
+  showTooltips = true,
 }: ToolbarProps) {
+  const TooltipButton = ({
+    tooltipText,
+    children,
+    disabled = false,
+  }: {
+    tooltipText: string;
+    children: React.ReactNode;
+    disabled?: boolean;
+  }) => {
+    if (!showTooltips || disabled) {
+      return <>{children}</>;
+    }
+    return (
+      <TooltipProvider delayDuration={100}>
+        <Tooltip>
+          <TooltipTrigger asChild>{children}</TooltipTrigger>
+          <TooltipContent side="right">
+            <p>{tooltipText}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
+
   return (
     <div className="w-[50px] border-r bg-muted/40 flex flex-col items-center py-4 gap-4">
-      <Button
-        variant={tool === "hand" ? "secondary" : "ghost"}
-        size="icon"
-        className="rounded-full"
-        onClick={() => onToolChange("hand")}
-      >
-        <Hand className="h-4 w-4" />
-      </Button>
+      <TooltipButton tooltipText="Select / Move (V)">
+        <Button
+          variant={tool === "hand" ? "secondary" : "ghost"}
+          size="icon"
+          className="rounded-full"
+          onClick={() => onToolChange("hand")}
+          aria-label="Select / Move Tool"
+        >
+          <Hand className="h-4 w-4" />
+        </Button>
+      </TooltipButton>
       <Separator className="w-8" />
-      <Button
-        variant={tool === "pencil" ? "secondary" : "ghost"}
-        size="icon"
-        className="rounded-full"
-        onClick={() => onToolChange("pencil")}
-      >
-        <Pencil className="h-4 w-4" />
-      </Button>
-      <Button
-        variant={tool === "eraser" ? "secondary" : "ghost"}
-        size="icon"
-        className="rounded-full"
-        onClick={() => onToolChange("eraser")}
-      >
-        <Eraser className="h-4 w-4" />
-      </Button>
-      <Button
-        variant={tool === "text" ? "secondary" : "ghost"}
-        size="icon"
-        className="rounded-full"
-        onClick={() => onToolChange("text")}
-      >
-        <Type className="h-4 w-4" />
-      </Button>
-      <Button
-        variant={tool === "image" ? "secondary" : "ghost"}
-        size="icon"
-        className="rounded-full"
-        onClick={() => onToolChange("image")}
-      >
-        <Image className="h-4 w-4" />
-      </Button>
+      <TooltipButton tooltipText="Pencil (P)">
+        <Button
+          variant={tool === "pencil" ? "secondary" : "ghost"}
+          size="icon"
+          className="rounded-full"
+          onClick={() => onToolChange("pencil")}
+          aria-label="Pencil Tool"
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
+      </TooltipButton>
+      <TooltipButton tooltipText="Eraser (E)">
+        <Button
+          variant={tool === "eraser" ? "secondary" : "ghost"}
+          size="icon"
+          className="rounded-full"
+          onClick={() => onToolChange("eraser")}
+          aria-label="Eraser Tool"
+        >
+          <Eraser className="h-4 w-4" />
+        </Button>
+      </TooltipButton>
+      <TooltipButton tooltipText="Text (T)">
+        <Button
+          variant={tool === "text" ? "secondary" : "ghost"}
+          size="icon"
+          className="rounded-full"
+          onClick={() => onToolChange("text")}
+          aria-label="Text Tool"
+        >
+          <Type className="h-4 w-4" />
+        </Button>
+      </TooltipButton>
+      <TooltipButton tooltipText="Image (I)">
+        <Button
+          variant={tool === "image" ? "secondary" : "ghost"}
+          size="icon"
+          className="rounded-full"
+          onClick={() => onToolChange("image")}
+          aria-label="Image Tool"
+        >
+          <Image className="h-4 w-4" />
+        </Button>
+      </TooltipButton>
       <ColorPicker color={color} onChange={onColorChange} />
       <Separator className="w-8" />
-      <Button
-        variant="ghost"
-        size="icon"
-        className="rounded-full"
-        onClick={onUndo}
-        disabled={!canUndo}
-      >
-        <Undo className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="rounded-full"
-        onClick={onRedo}
-        disabled={!canRedo}
-      >
-        <Redo className="h-4 w-4" />
-      </Button>
+      <TooltipButton tooltipText="Undo (Ctrl+Z)" disabled={!canUndo}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
+          onClick={onUndo}
+          disabled={!canUndo}
+          aria-label="Undo Action"
+        >
+          <Undo className="h-4 w-4" />
+        </Button>
+      </TooltipButton>
+      <TooltipButton tooltipText="Redo (Ctrl+Y)" disabled={!canRedo}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
+          onClick={onRedo}
+          disabled={!canRedo}
+          aria-label="Redo Action"
+        >
+          <Redo className="h-4 w-4" />
+        </Button>
+      </TooltipButton>
     </div>
   )
 }

@@ -14,7 +14,7 @@ export type TextElement = {
 };
 
 export type ImageElement = {
-  url: string;
+  imageId: string;
   position: Point;
   width: number;
   height: number;

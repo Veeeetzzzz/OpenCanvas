@@ -15,12 +15,25 @@ interface CanvasProps {
   color: string;
   onColorChange: (color: string) => void;
   onToolChange: (tool: Tool) => void;
-  onStateChange: (state: DrawingState) => void;
+  onStateChange: (update: DrawingState | DrawingAction, pastedImageDataUrl?: string) => void;
   history: DrawingState[];
   historyIndex: number;
+  imageDataCache: Record<string, string>;
+  gridEnabled?: boolean;
 }
 
-export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange, history, historyIndex }: CanvasProps) {
+const DEFAULT_GRID_SIZE = 20; // Define default grid size
+
+export function Canvas({
+  tool,
+  color,
+  onColorChange,
+  onStateChange,
+  history,
+  historyIndex,
+  imageDataCache,
+  gridEnabled = false,
+}: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [context, setContext] = useState<CanvasRenderingContext2D | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -33,13 +46,13 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
   const [dragStart, setDragStart] = useState<Point | null>(null)
   const [fontSize, setFontSize] = useState(16)
   const [font, setFont] = useState("Arial")
-  const [imageInput, setImageInput] = useState<HTMLInputElement | null>(null)
   const { toast } = useToast()
   const inputRef = useRef<HTMLInputElement>(null)
   const [clipboardImage, setClipboardImage] = useState<DrawingAction | null>(null)
   const [selectedText, setSelectedText] = useState<DrawingAction | null>(null)
   const [selectedTextIndex, setSelectedTextIndex] = useState<number | null>(null)
   const [activeTextInput, setActiveTextInput] = useState<{ position: Point; initialValue: string; width?: number; height?: number } | null>(null)
+  const [hoveredResizeHandle, setHoveredResizeHandle] = useState<string | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
 
   // --- Helper Function to Save Text --- 
@@ -109,9 +122,36 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
   // --- Canvas Redrawing --- 
   const redrawCanvas = () => {
     if (!context || !canvasRef.current) return;
-    
-    context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    
+    const canvasWidth = canvasRef.current.width;
+    const canvasHeight = canvasRef.current.height;
+
+    context.clearRect(0, 0, canvasWidth, canvasHeight);
+
+    // --- Draw Grid (if enabled) ---
+    if (gridEnabled) {
+      const gridSize = DEFAULT_GRID_SIZE; // Use the constant
+      context.save();
+      context.strokeStyle = "#e0e0e0"; // Light grey grid lines
+      context.lineWidth = 0.5;
+
+      // Vertical lines
+      for (let x = gridSize; x < canvasWidth; x += gridSize) {
+        context.beginPath();
+        context.moveTo(x, 0);
+        context.lineTo(x, canvasHeight);
+        context.stroke();
+      }
+
+      // Horizontal lines
+      for (let y = gridSize; y < canvasHeight; y += gridSize) {
+        context.beginPath();
+        context.moveTo(0, y);
+        context.lineTo(canvasWidth, y);
+        context.stroke();
+      }
+      context.restore();
+    }
+
     // Draw actions from the current point in history
     const currentState = history[historyIndex];
     if (currentState) {
@@ -138,22 +178,40 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
 
         } else if (action.imageElement) {
           try {
+            // Safety check for undefined imageId
+            if (!action.imageElement?.imageId) {
+              console.error("Image ID is undefined for action:", action);
+              context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+              context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
+              return;
+            }
+
+            // Get the image URL from the cache using the imageId
+            const imageUrl = imageDataCache[action.imageElement.imageId];
+            if (!imageUrl) {
+              console.error("Image URL not found in cache for ID:", action.imageElement.imageId);
+              context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+              context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
+              return;
+            }
+            
             const img = new Image();
-            img.src = action.imageElement.url;
+            img.src = imageUrl;
             if (img.complete) {
-              context.drawImage(img, action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+              context.drawImage(img, action.imageElement!.position.x, action.imageElement!.position.y, action.imageElement!.width, action.imageElement!.height);
             } else {
-              // Draw placeholder or handle loading state?
               img.onload = () => {
-                 // Check if the action still exists in the current state before drawing async
-                 if (history[historyIndex]?.actions.includes(action)) { 
-                    context.drawImage(img, action.imageElement!.position.x, action.imageElement!.position.y, action.imageElement!.width, action.imageElement!.height);
-                 }
-              }
-              img.onerror = () => console.error("Error loading image:", action.imageElement?.url);
+                if (action.imageElement) {
+                  context.drawImage(img, action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+                }
+              };
             }
           } catch (error) {
-             console.error("Error processing image action:", error);
+            console.error("Error drawing image:", error);
+            if (action.imageElement) {
+              context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+              context.fillText("Error", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
+            }
           }
         }
         context.restore(); // Restore context after drawing each action
@@ -201,65 +259,7 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
 
   useEffect(() => {
     redrawCanvas();
-  }, [history, historyIndex, selectedText, selectedImage]); // Redraw on history/selection change
-
-  useEffect(() => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.style.display = 'none';
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) { 
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          if (!event.target?.result || !context || !canvasRef.current) return;
-          const img = new Image();
-          img.onload = () => {
-            // Calculate default placement (e.g., center)
-            const canvasWidth = canvasRef.current?.width ?? 500;
-            const canvasHeight = canvasRef.current?.height ?? 500;
-            // Scale image if too large? (Example: max 300px width)
-            const scale = Math.min(1, 300 / img.width);
-            const width = img.width * scale;
-            const height = img.height * scale;
-            const x = (canvasWidth - width) / 2;
-            const y = (canvasHeight - height) / 2;
-            
-            const imageElement: ImageElement = { url: img.src, position: { x, y }, width, height };
-            
-            const newAction: DrawingAction = {
-              tool: 'image' as Tool, 
-              points: [], 
-              color: '', 
-              lineWidth: 0, 
-              imageElement
-            };
-
-            const currentHistoryState = history[historyIndex] ?? { actions: [], currentAction: null };
-            const newActions = [...currentHistoryState.actions, newAction];
-            onStateChange({ actions: newActions, currentAction: null });
-            
-            // Select the newly added image and switch to hand tool
-            setSelectedImage(newAction);
-            onToolChange('hand');
-            // Reset the input value to allow uploading the same file again
-            if (input) input.value = ''; 
-
-          };
-          img.onerror = () => toast({ title: "Error loading image", variant: "destructive" });
-          img.src = event.target.result as string;
-        };
-        reader.onerror = () => toast({ title: "Error reading file", variant: "destructive" });
-        reader.readAsDataURL(file);
-      } else {
-        // If no file selected, maybe switch back to previous tool or hand tool?
-         onToolChange('hand'); 
-      }
-    };
-    setImageInput(input);
-    return () => input.remove();
-  }, [context, historyIndex, onStateChange, onToolChange, toast]);
+  }, [history, historyIndex, selectedText, selectedImage, gridEnabled, redrawCanvas]); // Redraw on history/selection/grid change
 
   useEffect(() => {
     if (canvasRef.current) {
@@ -307,21 +307,6 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
     // document.body.style.cursor = 'default'; 
   }, [tool]); // <<<< Dependency array ONLY includes tool now
 
-  // Effect to trigger image input when tool is selected
-  useEffect(() => {
-    if (tool === 'image' && imageInput) {
-      // Clear any previous selection before showing dialog
-      setSelectedImage(null);
-      setSelectedText(null);
-      saveActiveText(); // Save any pending text input
-
-      imageInput.click(); 
-      // Switch back to hand tool immediately after triggering click?
-      // Or wait for upload/cancel in the input's onChange?
-      // Let's wait for onChange to handle tool switch back for better UX.
-    }
-  }, [tool, imageInput]); // Run when tool or imageInput changes
-
   // Effect to focus the text input when it becomes active
   useEffect(() => {
     if (activeTextInput && inputRef.current) {
@@ -336,6 +321,26 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
       return () => clearTimeout(timerId); 
     }
   }, [activeTextInput]); // Run only when activeTextInput changes
+
+  // Add effect to clean up tool states when tool changes
+  useEffect(() => {
+    // Cleanup function to reset all tool-specific states
+    const cleanupToolStates = () => {
+      setActiveTextInput(null);
+      setSelectedText(null);
+      setSelectedTextIndex(null);
+      setSelectedImage(null);
+      setSelectedImageIndex(null);
+      setIsDrawing(false);
+      setIsDragging(false);
+      setIsResizing(false);
+      setResizeHandle(null);
+      setDragStart(null);
+      setCurrentAction(null);
+    };
+
+    cleanupToolStates();
+  }, [tool]); // Run when tool changes
 
   // --- Interaction Logic Helpers ---
 
@@ -417,75 +422,79 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
     return null;
   };
 
+  // Helper function to get the appropriate resize cursor class
+  const getResizeCursorClassName = (handle: string | null): string => {
+    if (!handle) return '';
+    if (handle === 'nw' || handle === 'se') return 'cursor-nwse-resize';
+    if (handle === 'ne' || handle === 'sw') return 'cursor-nesw-resize';
+    // Add future handles like 'n', 's', 'e', 'w' here if needed
+    // if (handle === 'n' || handle === 's') return 'cursor-ns-resize';
+    // if (handle === 'e' || handle === 'w') return 'cursor-ew-resize';
+    return ''; // Default case
+  };
+
   // --- Event Handlers --- 
 
   const startDrawing = (e: React.MouseEvent) => {
-    if (e.button !== 0) return; // Only proceed for left clicks
-
-    // If text input is active, check if click is outside input & toolbar
-    if (activeTextInput) {
-      const clickTarget = e.target as Node;
-      const isClickOnInput = inputRef.current?.contains(clickTarget);
-      const isClickOnToolbar = toolbarRef.current?.contains(clickTarget);
-
-      if (!isClickOnInput && !isClickOnToolbar) {
-        console.log("Click outside active text input/toolbar. Saving text.");
-        saveActiveText();
-        // Now, let the rest of the startDrawing logic handle the new click
-      } else {
-        // Click was inside input or toolbar, do nothing, let the element handle it
-        console.log("Click inside active text input/toolbar. Ignoring startDrawing.");
-        return; 
-      }
-    }
-    
-    // --- Proceed with normal startDrawing if text wasn't active or was just saved --- 
-
     if (!context) return;
     const point = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
 
-    if (tool === 'hand') {
-      // Try hitting an image first
-      const imageHit = hitTestImage(point);
-      if (imageHit) {
-        const handle = getResizeHandle(point, imageHit.action);
-        setSelectedImage(imageHit.action);
-        setSelectedImageIndex(imageHit.index);
-        setSelectedText(null); // Deselect text
-        setSelectedTextIndex(null);
-        setIsDrawing(true); // Start interaction
-        e.preventDefault(); // Prevent default browser drag/selection
+    // Cleanup function to reset all tool-specific states
+    const cleanupToolStates = () => {
+      setActiveTextInput(null);
+      setSelectedText(null);
+      setSelectedTextIndex(null);
+      setSelectedImage(null);
+      setSelectedImageIndex(null);
+      setIsDrawing(false);
+      setIsDragging(false);
+      setIsResizing(false);
+      setResizeHandle(null);
+      setDragStart(null);
+      setCurrentAction(null);
+    };
 
-        if (handle) {
-          setIsResizing(true);
-          setResizeHandle(handle);
-          // Drag start for resizing is usually the opposite corner, or depends on handle
-          // For simplicity, we might recalculate based on fixed corner during resize
-          setDragStart(point); // Store initial click for calculations
-        } else {
-          setIsDragging(true);
-          // Calculate offset from top-left corner
-          setDragStart({ x: point.x - imageHit.action.imageElement!.position.x, y: point.y - imageHit.action.imageElement!.position.y });
-        }
+    // First, cleanup any existing tool states
+    cleanupToolStates();
+
+    if (tool === 'hand') {
+      const currentState = history[historyIndex];
+      if (!currentState) return;
+
+      // Check for text hit first
+      const textHit = textHitTest(point);
+      if (textHit) {
+        setSelectedText(textHit.action);
+        setSelectedTextIndex(textHit.index);
+        setSelectedImage(null);
+        setSelectedImageIndex(null);
+        setIsDrawing(true);
+        setIsDragging(true);
+        setDragStart({ x: point.x - textHit.action.textElement!.position.x, y: point.y - textHit.action.textElement!.position.y });
+        e.preventDefault();
       } else {
-        // Try hitting text if no image was hit
-        const textHit = textHitTest(point); // Now returns { action, index } or null
-        if (textHit) {
-           setSelectedText(textHit.action); 
-           setSelectedTextIndex(textHit.index);
-           setSelectedImage(null); // Deselect image
-           setSelectedImageIndex(null);
-           setIsDrawing(true); // Start interaction for dragging
-           setIsDragging(true);
-           // Calculate offset from top-left corner of text
-           setDragStart({ x: point.x - textHit.action.textElement!.position.x, y: point.y - textHit.action.textElement!.position.y });
-           e.preventDefault(); // Prevent text selection while dragging
-        } else {
-           // Clicked on empty space
-           setSelectedImage(null);
-           setSelectedImageIndex(null);
-           setSelectedText(null);
-           setSelectedTextIndex(null);
+        // Then check for image hit
+        const imageHit = hitTestImage(point);
+        if (imageHit) {
+          if (!imageHit.action.imageElement?.imageId) {
+            console.error("Attempted to select an image action with a missing imageId. Skipping selection.", imageHit.action);
+            return;
+          }
+
+          const handle = getResizeHandle(point, imageHit.action);
+          setSelectedImage(imageHit.action);
+          setSelectedImageIndex(imageHit.index);
+          setSelectedText(null);
+          setSelectedTextIndex(null);
+          
+          if (handle) {
+            setIsResizing(true);
+            setResizeHandle(handle);
+            setDragStart(point);
+          } else {
+            setIsDragging(true);
+            setDragStart({ x: point.x - imageHit.action.imageElement.position.x, y: point.y - imageHit.action.imageElement.position.y });
+          }
         }
       }
     } else if (tool === 'pencil' || tool === 'eraser') {
@@ -493,98 +502,145 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
       setCurrentAction({
         tool,
         points: [point],
-        color: tool === 'eraser' ? '#FFFFFF' : color, // Eraser uses white or background
-        lineWidth: tool === 'eraser' ? 20 : 5, // Example line widths
+        color: tool === 'eraser' ? '#FFFFFF' : color,
+        lineWidth: tool === 'eraser' ? 20 : 5,
       });
-      setSelectedImage(null); // Deselect any selected items
-      setSelectedImageIndex(null);
-      setSelectedText(null);
     } else if (tool === 'text') {
-      // Existing text tool logic for creating new text input
-      saveActiveText(); // Save any previous text first
-      setSelectedImage(null); 
-      setSelectedImageIndex(null);
-      setSelectedText(null);
-      // console.log("startDrawing: Setting activeTextInput", point); // REMOVED LOG
       setActiveTextInput({ position: point, initialValue: '' });
-      // Focus is handled by the useEffect now
+    } else if (tool === 'image') {
+      // Image tool selection is handled by the App component
+      // We just need to ensure other states are cleaned up
     }
-    // Add other tool start logic if needed
   };
 
   const draw = (e: React.MouseEvent) => {
-    if (!isDrawing || !context) return;
+    if (!context) return; // Only check context here, allow hover updates even if not drawing
     const point = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+    let currentHoveredHandle: string | null = null; // Track handle hover within this event
 
-    if (tool === 'hand' && selectedImage && selectedImage.imageElement) {
-       if (isResizing && resizeHandle && dragStart) {
-         const currentImage = selectedImage.imageElement;
-         let newWidth = currentImage.width;
-         let newHeight = currentImage.height;
-         let newX = currentImage.position.x;
-         let newY = currentImage.position.y;
-         const oppositeX = currentImage.position.x + currentImage.width;
-         const oppositeY = currentImage.position.y + currentImage.height;
+    // --- Handle specific tool interactions ONLY if drawing/dragging/resizing --- 
+    if (isDrawing || isResizing || isDragging) {
+      if (tool === 'hand' && selectedImage && selectedImage.imageElement) {
+         if (isResizing && resizeHandle && dragStart) {
+           // --- Resizing Logic --- (existing)
+           const currentImage = selectedImage.imageElement;
+           let newWidth = currentImage.width;
+           let newHeight = currentImage.height;
+           let newX = currentImage.position.x;
+           let newY = currentImage.position.y;
+           const oppositeX = currentImage.position.x + currentImage.width;
+           const oppositeY = currentImage.position.y + currentImage.height;
 
-         // Calculate new dimensions based on handle and mouse position
-         if (resizeHandle.includes('e')) newWidth = Math.max(10, point.x - newX);
-         if (resizeHandle.includes('w')) {
-           newWidth = Math.max(10, oppositeX - point.x);
-           newX = point.x;
-         }
-         if (resizeHandle.includes('s')) newHeight = Math.max(10, point.y - newY);
-         if (resizeHandle.includes('n')) {
-           newHeight = Math.max(10, oppositeY - point.y);
-           newY = point.y;
-         }
+           // Calculate new dimensions based on handle and mouse position
+           if (resizeHandle.includes('e')) newWidth = Math.max(10, point.x - newX);
+           if (resizeHandle.includes('w')) {
+             newWidth = Math.max(10, oppositeX - point.x);
+             newX = point.x;
+           }
+           if (resizeHandle.includes('s')) newHeight = Math.max(10, point.y - newY);
+           if (resizeHandle.includes('n')) {
+             newHeight = Math.max(10, oppositeY - point.y);
+             newY = point.y;
+           }
 
-         setSelectedImage({
-           ...selectedImage,
-           imageElement: {
+           // Update both selectedImage and history state
+           const updatedImageElement = {
              ...currentImage,
              position: { x: newX, y: newY },
              width: newWidth,
              height: newHeight,
-           }
-         });
-         // Redraw will be triggered by state change
+           };
 
-       } else if (isDragging && dragStart) {
+           // Update selectedImage state
+           setSelectedImage({
+             ...selectedImage,
+             imageElement: updatedImageElement
+           });
+
+           // Update history state
+           const currentState = history[historyIndex];
+           if (currentState && selectedImageIndex !== null) {
+             const updatedActions = [...currentState.actions];
+             updatedActions[selectedImageIndex] = {
+               ...selectedImage,
+               imageElement: updatedImageElement
+             };
+             onStateChange({ actions: updatedActions, currentAction: null });
+           }
+
+         } else if (isDragging && dragStart) {
+           // --- Image Dragging Logic ---
+           const newPosition = {
+             x: point.x - dragStart.x,
+             y: point.y - dragStart.y,
+           };
+           // Add safety check before updating state
+           if (selectedImage.imageElement) {
+             try {
+               setSelectedImage({ 
+                 ...selectedImage, 
+                 imageElement: { 
+                   ...selectedImage.imageElement, // No longer needs `!` 
+                   position: newPosition 
+                 }
+               });
+             } catch (error) {
+               console.error("Error during setSelectedImage in draw (dragging image):", error);
+               // Potentially stop interaction if state update fails
+               setIsDragging(false);
+               setIsDrawing(false);
+             }
+           } else {
+              console.error("Dragging image, but imageElement is missing during update.");
+              // Optionally stop dragging if state is corrupt?
+              // setIsDragging(false);
+              // setIsDrawing(false);
+           }
+         }
+      } else if (tool === 'hand' && selectedText && selectedText.textElement && isDragging && dragStart) {
+         // --- Text Dragging Logic --- (existing)
          const newPosition = {
            x: point.x - dragStart.x,
            y: point.y - dragStart.y,
          };
-         setSelectedImage({ ...selectedImage, imageElement: { ...selectedImage.imageElement, position: newPosition }});
-       }
-    } else if (tool === 'hand' && selectedText && selectedText.textElement && isDragging && dragStart) {
-       // Text dragging
-       const newPosition = {
-         x: point.x - dragStart.x,
-         y: point.y - dragStart.y,
-       };
-       // Update selectedText state for visual feedback during drag
-       setSelectedText({ 
-          ...selectedText, 
-          textElement: { ...selectedText.textElement, position: newPosition } 
-       });
-    } else if (currentAction && (tool === 'pencil' || tool === 'eraser')) {
-      const newPoints = [...currentAction.points, point];
-      setCurrentAction({ ...currentAction, points: newPoints });
-      // Draw the current line segment immediately for responsiveness
-      context.save();
-      context.beginPath();
-      context.strokeStyle = currentAction.color;
-      context.lineWidth = currentAction.lineWidth;
-      context.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
-      const lastPoint = currentAction.points[currentAction.points.length - 1];
-      context.moveTo(lastPoint.x, lastPoint.y);
-      context.lineTo(point.x, point.y);
-      context.stroke();
-      context.restore();
+         // Update selectedText state for visual feedback during drag
+         setSelectedText({ 
+            ...selectedText, 
+            textElement: { ...selectedText.textElement, position: newPosition } 
+         });
+         context.restore();
+      } else if (currentAction && (tool === 'pencil' || tool === 'eraser')) {
+        const newPoints = [...currentAction.points, point];
+        setCurrentAction({ ...currentAction, points: newPoints });
+        // Draw the current line segment immediately for responsiveness
+        context.save();
+        context.beginPath();
+        context.strokeStyle = currentAction.color;
+        context.lineWidth = currentAction.lineWidth;
+        context.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
+        const lastPoint = currentAction.points[currentAction.points.length - 1];
+        context.moveTo(lastPoint.x, lastPoint.y);
+        context.lineTo(point.x, point.y);
+        context.stroke();
+        context.restore();
+      }
     }
+
+    // --- Handle Hover Effects (update cursor state) --- 
+    // This runs even if not actively drawing/dragging/resizing
+    if (tool === 'hand' && selectedImage && !isDragging && !isResizing) {
+       // Only check for handle hover if an image is selected and we're not already dragging/resizing it
+       currentHoveredHandle = getResizeHandle(point, selectedImage);
+    }
+    
+    // Update the hovered handle state at the end of the move event
+    setHoveredResizeHandle(currentHoveredHandle);
   };
 
   const stopDrawing = (_e?: React.MouseEvent) => { 
+    // Reset hover state on mouse up/leave
+    setHoveredResizeHandle(null); 
+
     if (!isDrawing && !isResizing && !isDragging) return; // Exit if nothing was happening
 
     if (isDrawing && currentAction) {
@@ -600,12 +656,16 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
         const newActions = currentState.actions.map((action, index) => 
             index === selectedImageIndex ? newAction : action
         );
-        // Create a new state object for the history
         const newState: DrawingState = {
           actions: newActions,
           currentAction: null
         };
-        onStateChange(newState);
+        console.log("Finalizing image drag/resize. New state:", JSON.stringify(newState)); // Log state before update
+        try {
+          onStateChange(newState);
+        } catch (error) {
+           console.error("Error during onStateChange in stopDrawing (image drag/resize):", error);
+        }
       } else {
         console.error("Could not find selected image index in history on stopDrawing");
       }
@@ -687,28 +747,44 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
   }
 
   const handlePasteImage = () => {
-    if (!clipboardImage || !canvasRef.current || !context) return;
+    // Simplified Paste: Works if original imageId is still in cache.
+    // Does NOT add the pasted image data back to cache under the new ID yet.
+    if (!clipboardImage?.imageElement || !canvasRef.current || !context) return;
 
+    // Get the original image URL from the cache using the ID from the clipboard state.
+    const cachedUrl = imageDataCache[clipboardImage.imageElement.imageId];
+    if (!cachedUrl) {
+      console.error("Paste Error: Original image data not found in cache for ID:", clipboardImage.imageElement.imageId);
+      toast({ title: "Paste Error", description: "Original image data not found.", variant: "destructive" });
+      return;
+    }
+
+    // We have the URL, dimensions, create new action with new ID.
     const pastePosition = { x: 20, y: 20 }; 
+    const newImageId = `img_${Date.now()}_paste_${Math.random().toString(36).substring(2, 9)}`;
 
     const newImageElement: ImageElement = {
-      ...clipboardImage.imageElement!,
+      imageId: newImageId, // Assign the new ID
       position: {
-        x: pastePosition.x - clipboardImage.imageElement!.width / 2,
-        y: pastePosition.y - clipboardImage.imageElement!.height / 2
-      }
+        x: pastePosition.x - clipboardImage.imageElement.width / 2,
+        y: pastePosition.y - clipboardImage.imageElement.height / 2
+      },
+      width: clipboardImage.imageElement.width,
+      height: clipboardImage.imageElement.height,
     };
 
-    const currentHistoryState = history[historyIndex] ?? { actions: [], currentAction: null };
-    const newActions = [...currentHistoryState.actions, {
+    const newImageAction: DrawingAction = {
       tool: 'image' as Tool,
       points: [],
-      color: clipboardImage.color,
-      lineWidth: clipboardImage.lineWidth,
+      color: '',
+      lineWidth: 0,
       imageElement: newImageElement
-    }];
-    onStateChange({ actions: newActions, currentAction: null });
+    };
+    
+    // Pass the single new action AND the original URL to handleStateChange in App
+    onStateChange(newImageAction, cachedUrl);
     toast({ title: "Image pasted" });
+    // No need to call setContextMenuPosition as it was removed from state
   }
 
   const handleDeleteImage = () => {
@@ -837,12 +913,19 @@ export function Canvas({ tool, color, onColorChange, onToolChange, onStateChange
           <canvas
             ref={canvasRef}
             className={`w-full h-full ${ 
-              activeTextInput ? 'cursor-text' : // Highest priority cursor
-              tool === "hand" 
-                ? isDragging ? "cursor-grabbing" : (selectedImage || selectedText) ? "cursor-grab" : "cursor-default"
-                : tool === "text" 
-                  ? "cursor-text" 
-                  : "cursor-crosshair"
+              activeTextInput ? 'cursor-text' :
+              tool === 'text' ? 'cursor-text' :
+              tool === 'hand' 
+                ? isResizing 
+                  ? getResizeCursorClassName(resizeHandle) // Resizing: specific arrow
+                  : hoveredResizeHandle 
+                    ? getResizeCursorClassName(hoveredResizeHandle) // Hover handle: specific arrow
+                    : isDragging 
+                      ? 'cursor-grabbing' // Dragging item: grabbing hand
+                      : (selectedImage || selectedText) 
+                        ? 'cursor-grab' // Hover selected item: open hand
+                        : 'cursor-default' // Hand tool, nothing selected: default
+                : 'cursor-crosshair' // Other tools: crosshair
             }`}
             onMouseDown={startDrawing}
             onMouseMove={draw}

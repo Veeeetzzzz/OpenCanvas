@@ -79,12 +79,6 @@ export function Sidebar({ documents, currentDocumentId, onNewDocument, onSwitchD
           </div>
         </div>
       </ScrollArea>
-      <div className="p-4 border-t">
-        <Button variant="ghost" className="w-full justify-start gap-2">
-          <Settings className="h-4 w-4" />
-          Settings
-        </Button>
-      </div>
     </div>
   )
 }
