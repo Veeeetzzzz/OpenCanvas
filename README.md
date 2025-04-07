@@ -8,3 +8,6 @@
 
 ## Features
 
+- Open source & 100% free. Forever.
+- 100% local storage - offline & private.
+- Share links are unlisted, cannot be enumerated & can be password protected.
