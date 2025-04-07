@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
-import { Plus, FolderOpen, Settings, Trash2, Copy } from "lucide-react"
+import { Plus, FolderOpen, Trash2, Copy } from "lucide-react"
 import { DrawingState } from '@/lib/types'; // Assuming DrawingState is exported from types
 
 // Define the structure for a single document (matches App.tsx)
