@@ -18,7 +18,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Dispatch, SetStateAction } from "react"
 
 interface ToolbarProps {
   tool: Tool;
