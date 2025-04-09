@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { Tool, DrawingState, DrawingAction, Point, TextElement, ImageElement } from "@/lib/types"
 import { useToast } from "@/hooks/use-toast"
 import { TextToolbar } from "@/components/text-toolbar"
@@ -13,6 +13,7 @@ import { Copy, Trash } from "lucide-react"
 interface CanvasProps {
   tool: Tool;
   color: string;
+  lineWidth: number;
   onColorChange: (color: string) => void;
   onToolChange: (tool: Tool) => void;
   onStateChange: (update: DrawingState | DrawingAction, pastedImageDataUrl?: string) => void;
@@ -27,6 +28,7 @@ const DEFAULT_GRID_SIZE = 20; // Define default grid size
 export function Canvas({
   tool,
   color,
+  lineWidth,
   onColorChange,
   onStateChange,
   history,
@@ -119,30 +121,26 @@ export function Canvas({
     }
   };
 
-  // --- Canvas Redrawing --- 
-  const redrawCanvas = () => {
+  // --- Canvas Redrawing (Memoized) --- 
+  const redrawCanvas = useCallback(() => {
     if (!context || !canvasRef.current) return;
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
 
     context.clearRect(0, 0, canvasWidth, canvasHeight);
 
-    // --- Draw Grid (if enabled) ---
+    // Draw Grid
     if (gridEnabled) {
-      const gridSize = DEFAULT_GRID_SIZE; // Use the constant
+      const gridSize = DEFAULT_GRID_SIZE;
       context.save();
-      context.strokeStyle = "#e0e0e0"; // Light grey grid lines
+      context.strokeStyle = "#e0e0e0";
       context.lineWidth = 0.5;
-
-      // Vertical lines
       for (let x = gridSize; x < canvasWidth; x += gridSize) {
         context.beginPath();
         context.moveTo(x, 0);
         context.lineTo(x, canvasHeight);
         context.stroke();
       }
-
-      // Horizontal lines
       for (let y = gridSize; y < canvasHeight; y += gridSize) {
         context.beginPath();
         context.moveTo(0, y);
@@ -152,88 +150,77 @@ export function Canvas({
       context.restore();
     }
 
-    // Draw actions from the current point in history
+    // Draw history actions
     const currentState = history[historyIndex];
     if (currentState) {
       currentState.actions.forEach(action => {
-        context.save(); // Save context before drawing each action
+        context.save();
+        // Pencil/Eraser
         if (action.tool === 'pencil' || action.tool === 'eraser') {
           context.beginPath();
           context.strokeStyle = action.color;
           context.lineWidth = action.lineWidth;
           context.globalCompositeOperation = action.tool === 'eraser' ? 'destination-out' : 'source-over';
-          
           action.points.forEach((point, i) => {
             if (i === 0) context.moveTo(point.x, point.y);
             else context.lineTo(point.x, point.y);
           });
           context.stroke();
-
+        // Text
         } else if (action.textElement) {
           context.textBaseline = 'top';
           const { text, position, font, fontSize, color } = action.textElement;
           context.font = `${fontSize}px ${font}`;
           context.fillStyle = color;
           context.fillText(text, position.x, position.y);
-
+        // Image
         } else if (action.imageElement) {
-          try {
-            // Safety check for undefined imageId
-            if (!action.imageElement?.imageId) {
-              console.error("Image ID is undefined for action:", action);
-              context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
-              context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
-              return;
-            }
-
-            // Get the image URL from the cache using the imageId
-            const imageUrl = imageDataCache[action.imageElement.imageId];
-            if (!imageUrl) {
-              console.error("Image URL not found in cache for ID:", action.imageElement.imageId);
-              context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
-              context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
-              return;
-            }
-            
+          const imageUrl = imageDataCache[action.imageElement.imageId];
+          if (imageUrl) {
             const img = new Image();
             img.src = imageUrl;
-            if (img.complete) {
-              context.drawImage(img, action.imageElement!.position.x, action.imageElement!.position.y, action.imageElement!.width, action.imageElement!.height);
+            // Attempt to draw synchronously if already loaded, else use onload
+            if (img.complete && img.naturalHeight !== 0) {
+                 context.drawImage(img, action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
             } else {
-              img.onload = () => {
-                if (action.imageElement) {
-                  context.drawImage(img, action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+                img.onload = () => {
+                    if (action.imageElement) { // Check again in case action changed
+                       context.drawImage(img, action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+                    }
+                };
+                img.onerror = () => {
+                    console.error("Failed to load image for drawing:", imageUrl);
+                     // Draw placeholder on error
+                     if (action.imageElement) { // Check if element exists before accessing props
+                      context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+                      context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
+                     }
                 }
-              };
             }
-          } catch (error) {
-            console.error("Error drawing image:", error);
-            if (action.imageElement) {
-              context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
-              context.fillText("Error", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
-            }
+        } else if (action.imageElement) { // Added check for imageElement here too
+             // Draw placeholder if URL missing
+             context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+             context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
           }
         }
-        context.restore(); // Restore context after drawing each action
+        context.restore();
       });
     }
     
-    // --- Draw UI elements over the actions --- 
+    // Draw UI elements (selection, resize handles)
     context.save();
-
-    // Draw selection highlight for text (hand tool)
+    // Text Selection Highlight
     if (selectedText?.textElement && tool === 'hand') {
-      const { text, position, font, fontSize } = selectedText.textElement;
-      context.font = `${fontSize}px ${font}`;
-      const metrics = context.measureText(text);
-      context.strokeStyle = 'rgba(0, 100, 255, 0.7)';
-      context.lineWidth = 1;
-      context.setLineDash([4, 2]);
-      context.strokeRect(position.x - 2, position.y - 2, metrics.width + 4, fontSize * 1.2 + 4);
-      context.setLineDash([]); // Reset line dash
+        const { text, position, font, fontSize } = selectedText.textElement;
+        context.font = `${fontSize}px ${font}`;
+        const metrics = context.measureText(text);
+        context.strokeStyle = 'rgba(0, 100, 255, 0.7)';
+        context.lineWidth = 1;
+        context.setLineDash([4, 2]);
+        context.strokeRect(position.x - 2, position.y - 2, metrics.width + 4, fontSize * 1.2 + 4);
+        context.setLineDash([]);
     }
-    
-    // Draw resize handles for image (hand tool)
+    // Image Resize Handles
     if (selectedImage?.imageElement && tool === 'hand') {
       const { position, width, height } = selectedImage.imageElement;
       const handleSize = 8;
@@ -241,30 +228,34 @@ export function Canvas({
       context.strokeStyle = 'black';
       context.lineWidth = 1;
       const handles = [
-        [position.x + width, position.y + height], [position.x, position.y + height],
-        [position.x + width, position.y], [position.x, position.y]
+        { x: position.x, y: position.y }, // nw
+        { x: position.x + width, y: position.y }, // ne
+        { x: position.x, y: position.y + height }, // sw
+        { x: position.x + width, y: position.y + height } // se
       ];
-      handles.forEach(([x, y]) => {
+      handles.forEach(handle => {
         context.beginPath();
-        context.arc(x, y, handleSize / 2, 0, Math.PI * 2);
+        context.arc(handle.x, handle.y, handleSize / 2, 0, Math.PI * 2);
         context.fill();
         context.stroke();
       });
     }
-
     context.restore();
-  }
+  // Add dependencies for useCallback
+  }, [context, gridEnabled, history, historyIndex, imageDataCache, tool, selectedText, selectedImage]);
 
   // --- Effects --- 
 
+  // Effect for primary redraw trigger
   useEffect(() => {
     redrawCanvas();
-  }, [history, historyIndex, selectedText, selectedImage, gridEnabled, redrawCanvas]); // Redraw on history/selection/grid change
+    // Depend only on the memoized redrawCanvas function
+  }, [redrawCanvas]);
 
+  // Effect for setting up canvas context and resize observer
   useEffect(() => {
     if (canvasRef.current) {
       const canvas = canvasRef.current;
-      // Debounce resize handling?
       const observer = new ResizeObserver(() => {
          canvas.width = canvas.offsetWidth;
          canvas.height = canvas.offsetHeight;
@@ -273,22 +264,30 @@ export function Canvas({
             ctx.lineJoin = "round";
             ctx.lineCap = "round";
             setContext(ctx);
-            redrawCanvas(); // Redraw after resize
+            // No need to call redrawCanvas here, 
+            // setContext will trigger state change -> redrawCanvas effect
          } else {
             setContext(null);
          }
       });
       observer.observe(canvas);
 
+      // Initial context setup
       const ctx = canvas.getContext("2d");
       if (ctx) {
           ctx.lineJoin = "round";
           ctx.lineCap = "round";
           setContext(ctx);
       }
+      
+      // Set initial size
+      canvas.width = canvas.offsetWidth;
+      canvas.height = canvas.offsetHeight;
+      // The initial redraw will happen due to the setContext call triggering the other effect
+
       return () => observer.disconnect();
     }
-  }, []);
+  }, []); // Run only once on mount
 
   // Effect to handle tool changes
   useEffect(() => {
@@ -503,7 +502,7 @@ export function Canvas({
         tool,
         points: [point],
         color: tool === 'eraser' ? '#FFFFFF' : color,
-        lineWidth: tool === 'eraser' ? 20 : 5,
+        lineWidth: tool === 'eraser' ? 20 : lineWidth,
       });
     } else if (tool === 'text') {
       setActiveTextInput({ position: point, initialValue: '' });
@@ -514,11 +513,10 @@ export function Canvas({
   };
 
   const draw = (e: React.MouseEvent) => {
-    if (!context) return; // Only check context here, allow hover updates even if not drawing
+    if (!context) return;
     const point = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
-    let currentHoveredHandle: string | null = null; // Track handle hover within this event
+    let currentHoveredHandle: string | null = null;
 
-    // --- Handle specific tool interactions ONLY if drawing/dragging/resizing --- 
     if (isDrawing || isResizing || isDragging) {
       if (tool === 'hand' && selectedImage && selectedImage.imageElement) {
          if (isResizing && resizeHandle && dragStart) {
@@ -610,19 +608,26 @@ export function Canvas({
          });
          context.restore();
       } else if (currentAction && (tool === 'pencil' || tool === 'eraser')) {
-        const newPoints = [...currentAction.points, point];
-        setCurrentAction({ ...currentAction, points: newPoints });
-        // Draw the current line segment immediately for responsiveness
+        // Get the last point BEFORE adding the new one
+        const lastPoint = currentAction.points[currentAction.points.length - 1];
+        const newPoint = point; // Current mouse position
+
+        // --- Draw the current segment FIRST for immediate feedback ---
         context.save();
         context.beginPath();
         context.strokeStyle = currentAction.color;
         context.lineWidth = currentAction.lineWidth;
         context.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
-        const lastPoint = currentAction.points[currentAction.points.length - 1];
         context.moveTo(lastPoint.x, lastPoint.y);
-        context.lineTo(point.x, point.y);
+        context.lineTo(newPoint.x, newPoint.y);
         context.stroke();
         context.restore();
+        // --- END immediate drawing ---
+
+        // --- THEN update the state ---
+        const newPoints = [...currentAction.points, newPoint];
+        const updatedAction = { ...currentAction, points: newPoints };
+        setCurrentAction(updatedAction);
       }
     }
 

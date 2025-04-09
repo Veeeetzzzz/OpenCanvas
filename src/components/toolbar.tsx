@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ColorPicker } from "@/components/color-picker"
+import { Slider } from "@/components/ui/slider"
 import { Tool } from "@/lib/types"
 import {
   Pencil,
@@ -17,12 +18,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { Dispatch, SetStateAction } from "react"
 
 interface ToolbarProps {
   tool: Tool;
   color: string;
+  lineWidth: number;
   onToolChange: (tool: Tool) => void;
   onColorChange: (color: string) => void;
+  onLineWidthChange: (width: number) => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -33,8 +37,10 @@ interface ToolbarProps {
 export function Toolbar({
   tool,
   color,
+  lineWidth,
   onToolChange,
   onColorChange,
+  onLineWidthChange,
   onUndo,
   onRedo,
   canUndo,
@@ -66,7 +72,7 @@ export function Toolbar({
   };
 
   return (
-    <div className="w-[50px] border-r bg-muted/40 flex flex-col items-center py-4 gap-4">
+    <div className="w-[60px] border-r bg-muted/40 flex flex-col items-center py-4 gap-4">
       <TooltipButton tooltipText="Select / Move (V)">
         <Button
           variant={tool === "hand" ? "secondary" : "ghost"}
@@ -90,6 +96,19 @@ export function Toolbar({
           <Pencil className="h-4 w-4" />
         </Button>
       </TooltipButton>
+      {tool === 'pencil' && (
+        <div className="px-2 w-full flex flex-col items-center gap-2">
+          <Slider
+            value={[lineWidth]}
+            onValueChange={([value]) => onLineWidthChange(value)}
+            min={1}
+            max={50}
+            step={1}
+            className="w-full"
+          />
+          <span className="text-xs text-muted-foreground">{lineWidth}px</span>
+        </div>
+      )}
       <TooltipButton tooltipText="Eraser (E)">
         <Button
           variant={tool === "eraser" ? "secondary" : "ghost"}

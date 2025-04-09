@@ -20,6 +20,7 @@ interface Document {
 function App() {
   const [tool, setTool] = useState<Tool>('pencil');
   const [color, setColor] = useState('#000000');
+  const [lineWidth, setLineWidth] = useState(5);
   // State to hold all documents
   const [documents, setDocuments] = useState<Document[]>([]);
   // State to track the ID of the currently active document
@@ -319,7 +320,7 @@ function App() {
           />
           <main className="flex-1 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b">
-              <h1 className="text-2xl font-semibold">Flow</h1>
+              <div></div>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" disabled>Share</Button>
                 <Button 
@@ -336,8 +337,10 @@ function App() {
               <Toolbar
                 tool={tool}
                 color={color}
+                lineWidth={lineWidth}
                 onToolChange={setTool}
                 onColorChange={setColor}
+                onLineWidthChange={setLineWidth}
                 onUndo={handleUndo}
                 onRedo={handleRedo}
                 canUndo={currentHistoryIndex > 0}
@@ -348,6 +351,7 @@ function App() {
                 <Canvas
                   tool={tool}
                   color={color}
+                  lineWidth={lineWidth}
                   onColorChange={setColor}
                   onToolChange={setTool}
                   onStateChange={handleStateChange}
