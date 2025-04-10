@@ -18,14 +18,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 
 interface ToolbarProps {
   tool: Tool;
   color: string;
-  lineWidth: number;
+  pencilWidth: number;
+  eraserWidth: number;
   onToolChange: (tool: Tool) => void;
   onColorChange: (color: string) => void;
-  onLineWidthChange: (width: number) => void;
+  onPencilWidthChange: (width: number) => void;
+  onEraserWidthChange: (width: number) => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -36,10 +39,12 @@ interface ToolbarProps {
 export function Toolbar({
   tool,
   color,
-  lineWidth,
+  pencilWidth,
+  eraserWidth,
   onToolChange,
   onColorChange,
-  onLineWidthChange,
+  onPencilWidthChange,
+  onEraserWidthChange,
   onUndo,
   onRedo,
   canUndo,
@@ -96,17 +101,24 @@ export function Toolbar({
         </Button>
       </TooltipButton>
       {tool === 'pencil' && (
-        <div className="px-2 w-full flex flex-col items-center gap-2">
-          <Slider
-            value={[lineWidth]}
-            onValueChange={([value]) => onLineWidthChange(value)}
-            min={1}
-            max={50}
-            step={1}
-            className="w-full"
-          />
-          <span className="text-xs text-muted-foreground">{lineWidth}px</span>
-        </div>
+        <>
+          <div className="px-2 w-full flex flex-col items-center gap-1 mt-1">
+            <span className="text-xs text-muted-foreground">Thickness</span>
+            <Slider
+              value={[pencilWidth]}
+              onValueChange={([value]) => onPencilWidthChange(value)}
+              min={1}
+              max={50}
+              step={1}
+              className="w-full"
+              aria-label="Pencil Thickness"
+            />
+            <span className="text-xs text-muted-foreground">{pencilWidth}px</span>
+          </div>
+          <div className="pt-2">
+            <ColorPicker color={color} onChange={onColorChange} />
+          </div>
+        </>
       )}
       <TooltipButton tooltipText="Eraser (E)">
         <Button
@@ -119,6 +131,23 @@ export function Toolbar({
           <Eraser className="h-4 w-4" />
         </Button>
       </TooltipButton>
+      {tool === 'eraser' && (
+        <>
+          <div className="px-2 w-full flex flex-col items-center gap-1 mt-1">
+            <span className="text-xs text-muted-foreground">Size</span>
+            <Slider
+              value={[eraserWidth]}
+              onValueChange={([value]) => onEraserWidthChange(value)}
+              min={1}
+              max={100}
+              step={1}
+              className="w-full"
+              aria-label="Eraser Size"
+            />
+            <span className="text-xs text-muted-foreground">{eraserWidth}px</span>
+          </div>
+        </>
+      )}
       <TooltipButton tooltipText="Text (T)">
         <Button
           variant={tool === "text" ? "secondary" : "ghost"}
@@ -141,8 +170,7 @@ export function Toolbar({
           <Image className="h-4 w-4" />
         </Button>
       </TooltipButton>
-      <ColorPicker color={color} onChange={onColorChange} />
-      <Separator className="w-8" />
+      <Separator className="w-8 mt-auto" />
       <TooltipButton tooltipText="Undo (Ctrl+Z)" disabled={!canUndo}>
         <Button
           variant="ghost"

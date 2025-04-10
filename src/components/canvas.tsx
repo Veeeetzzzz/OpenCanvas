@@ -8,12 +8,13 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import { Copy, Trash } from "lucide-react"
+import { Copy, Trash, Pin, PinOff } from "lucide-react"
 
 interface CanvasProps {
   tool: Tool;
   color: string;
-  lineWidth: number;
+  pencilWidth: number;
+  eraserWidth: number;
   onColorChange: (color: string) => void;
   onToolChange: (tool: Tool) => void;
   onStateChange: (update: DrawingState | DrawingAction, pastedImageDataUrl?: string) => void;
@@ -28,8 +29,10 @@ const DEFAULT_GRID_SIZE = 20; // Define default grid size
 export function Canvas({
   tool,
   color,
-  lineWidth,
+  pencilWidth,
+  eraserWidth,
   onColorChange,
+  onToolChange,
   onStateChange,
   history,
   historyIndex,
@@ -56,70 +59,71 @@ export function Canvas({
   const [activeTextInput, setActiveTextInput] = useState<{ position: Point; initialValue: string; width?: number; height?: number } | null>(null)
   const [hoveredResizeHandle, setHoveredResizeHandle] = useState<string | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
+  const [isTextToolbarPinned, setIsTextToolbarPinned] = useState(false)
 
-  // --- Helper Function to Save Text --- 
-  const saveActiveText = () => {
-    // Only proceed if the input ref and context exist, and text input is active
+  // --- Tool State Cleanup ---
+  const cleanupToolStates = useCallback(() => {
+    setActiveTextInput(null);
+    setSelectedText(null);
+    setSelectedTextIndex(null);
+    setSelectedImage(null);
+    setSelectedImageIndex(null);
+    setIsDrawing(false);
+    setIsDragging(false);
+    setIsResizing(false);
+    setResizeHandle(null);
+    setDragStart(null);
+    setCurrentAction(null);
+    // Don't reset the input ref value here, text saving handles that
+  }, []); // Empty dependency array as it only uses setters
+
+  // --- Helper Function to Save Text (Memoized) --- 
+  const saveActiveText = useCallback(() => {
     if (!inputRef.current || !context || !activeTextInput) {
-      // If called when not active, ensure it's null (might be redundant but safe)
       if (activeTextInput) setActiveTextInput(null);
       return;
     }
-
     const text = inputRef.current.value;
     const isTrimmedEmpty = text.trim().length === 0;
     const isIdenticalToInitial = activeTextInput.initialValue && text === activeTextInput.initialValue;
-
     let shouldDeactivate = false;
 
-    // Condition 1: Save non-empty text
     if (!isTrimmedEmpty) {
-      // If it's a re-edit and the text hasn't changed, don't create a new history state
       if (isIdenticalToInitial) {
-         console.log("saveActiveText: Text identical to initial value, deactivating without saving.");
-         shouldDeactivate = true;
+        shouldDeactivate = true;
       } else {
-         console.log("saveActiveText: Saving text:", text);
-         const textElement: TextElement = {
-           text,
-           position: activeTextInput.position, 
-           font,
-           fontSize,
-           color
-         };
-         
-         const currentHistoryState = history[historyIndex] ?? { actions: [], currentAction: null };
-         const newActions = [...currentHistoryState.actions, {
-           tool: 'text' as Tool,
-           points: [],
-           color,
-           lineWidth: 0,
-           textElement
-         }];
-         
-         onStateChange({ actions: newActions, currentAction: null });
-         shouldDeactivate = true;
+        const textElement: TextElement = {
+          text,
+          position: activeTextInput.position,
+          font,
+          fontSize,
+          color
+        };
+        const currentHistoryState = history[historyIndex] ?? { actions: [], currentAction: null };
+        const newActions = [...currentHistoryState.actions, {
+          tool: 'text' as Tool,
+          points: [],
+          color,
+          lineWidth: 0,
+          textElement
+        }];
+        onStateChange({ actions: newActions, currentAction: null });
+        shouldDeactivate = true;
       }
     } else {
-       // Condition 2: Text is empty or whitespace only. 
-       // Deactivate ONLY if it was a re-edit (initialValue existed). 
-       // Do NOT deactivate if it was a brand new input that remained empty.
-       if (activeTextInput.initialValue !== '') {
-          console.log("saveActiveText: Text is empty, but was a re-edit. Deactivating.");
-          shouldDeactivate = true;
-       } else {
-          console.log("saveActiveText: Text is empty on a new input. NOT deactivating.");
-       }
+      if (activeTextInput.initialValue !== '') {
+        shouldDeactivate = true;
+      }
     }
 
-    // Deactivate and clear input only if conditions were met
     if (shouldDeactivate) {
       if (inputRef.current) {
-         inputRef.current.value = ''; // Clear field
+        inputRef.current.value = '';
       }
       setActiveTextInput(null); 
     }
-  };
+  // Add dependencies for useCallback
+  }, [inputRef, context, activeTextInput, font, fontSize, color, history, historyIndex, onStateChange]);
 
   // --- Canvas Redrawing (Memoized) --- 
   const redrawCanvas = useCallback(() => {
@@ -289,22 +293,20 @@ export function Canvas({
     }
   }, []); // Run only once on mount
 
-  // Effect to handle tool changes
+  // Effect to handle tool changes 
   useEffect(() => {
-    // console.log(`Tool changed to: ${tool}`); 
     if (tool !== 'text' && activeTextInput) {
-      // console.log(`Tool is ${tool}, activeTextInput exists. Saving text.`);
       saveActiveText(); 
     }
     if (tool !== 'hand') {
-      // console.log(`Tool is ${tool}. Deselecting items.`);
       setSelectedImage(null);
-      setSelectedImageIndex(null); // Also clear index
+      setSelectedImageIndex(null); 
       setSelectedText(null);
     }
-    // Reset cursor if needed when tool changes
-    // document.body.style.cursor = 'default'; 
-  }, [tool]); // <<<< Dependency array ONLY includes tool now
+    if (tool === 'pencil' || tool === 'eraser' || tool === 'image') {
+      setIsTextToolbarPinned(false);
+    }
+  }, [tool, activeTextInput, saveActiveText]); // Dependency saveActiveText is now stable
 
   // Effect to focus the text input when it becomes active
   useEffect(() => {
@@ -320,26 +322,6 @@ export function Canvas({
       return () => clearTimeout(timerId); 
     }
   }, [activeTextInput]); // Run only when activeTextInput changes
-
-  // Add effect to clean up tool states when tool changes
-  useEffect(() => {
-    // Cleanup function to reset all tool-specific states
-    const cleanupToolStates = () => {
-      setActiveTextInput(null);
-      setSelectedText(null);
-      setSelectedTextIndex(null);
-      setSelectedImage(null);
-      setSelectedImageIndex(null);
-      setIsDrawing(false);
-      setIsDragging(false);
-      setIsResizing(false);
-      setResizeHandle(null);
-      setDragStart(null);
-      setCurrentAction(null);
-    };
-
-    cleanupToolStates();
-  }, [tool]); // Run when tool changes
 
   // --- Interaction Logic Helpers ---
 
@@ -434,81 +416,73 @@ export function Canvas({
 
   // --- Event Handlers --- 
 
-  const startDrawing = (e: React.MouseEvent) => {
+  const startDrawing = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!context) return;
-    const point = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+    cleanupToolStates(); // Call the restored cleanup function
 
-    // Cleanup function to reset all tool-specific states
-    const cleanupToolStates = () => {
-      setActiveTextInput(null);
-      setSelectedText(null);
-      setSelectedTextIndex(null);
-      setSelectedImage(null);
-      setSelectedImageIndex(null);
-      setIsDrawing(false);
-      setIsDragging(false);
-      setIsResizing(false);
-      setResizeHandle(null);
-      setDragStart(null);
-      setCurrentAction(null);
-    };
+    const { offsetX, offsetY } = event.nativeEvent;
+    const point = { x: offsetX, y: offsetY };
+    setIsDrawing(true);
 
-    // First, cleanup any existing tool states
-    cleanupToolStates();
-
-    if (tool === 'hand') {
-      const currentState = history[historyIndex];
-      if (!currentState) return;
-
-      // Check for text hit first
-      const textHit = textHitTest(point);
-      if (textHit) {
-        setSelectedText(textHit.action);
-        setSelectedTextIndex(textHit.index);
-        setSelectedImage(null);
-        setSelectedImageIndex(null);
-        setIsDrawing(true);
-        setIsDragging(true);
-        setDragStart({ x: point.x - textHit.action.textElement!.position.x, y: point.y - textHit.action.textElement!.position.y });
-        e.preventDefault();
-      } else {
-        // Then check for image hit
-        const imageHit = hitTestImage(point);
-        if (imageHit) {
-          if (!imageHit.action.imageElement?.imageId) {
-            console.error("Attempted to select an image action with a missing imageId. Skipping selection.", imageHit.action);
-            return;
-          }
-
-          const handle = getResizeHandle(point, imageHit.action);
-          setSelectedImage(imageHit.action);
-          setSelectedImageIndex(imageHit.index);
-          setSelectedText(null);
-          setSelectedTextIndex(null);
-          
-          if (handle) {
-            setIsResizing(true);
-            setResizeHandle(handle);
-            setDragStart(point);
-          } else {
-            setIsDragging(true);
-            setDragStart({ x: point.x - imageHit.action.imageElement.position.x, y: point.y - imageHit.action.imageElement.position.y });
-          }
-        }
-      }
-    } else if (tool === 'pencil' || tool === 'eraser') {
-      setIsDrawing(true);
+    if (tool === 'pencil' || tool === 'eraser') {
+      // Use the correct width based on the tool
+      const width = tool === 'pencil' ? pencilWidth : eraserWidth;
       setCurrentAction({
         tool,
         points: [point],
-        color: tool === 'eraser' ? '#FFFFFF' : color,
-        lineWidth: tool === 'eraser' ? 20 : lineWidth,
+        color: tool === 'eraser' ? '#000000' : color, 
+        lineWidth: width, // Use the determined width
       });
     } else if (tool === 'text') {
+      // Handle text activation
       setActiveTextInput({ position: point, initialValue: '' });
-    } else if (tool === 'image') {
-      // Image tool selection is handled by the App component
-      // We just need to ensure other states are cleaned up
+    } else if (tool === 'hand') {
+       // Handle selection/drag initiation for hand tool
+       const currentState = history[historyIndex];
+       if (!currentState) return;
+       
+       // Check for text hit first
+       const textHit = textHitTest(point);
+       if (textHit) {
+         setSelectedText(textHit.action);
+         setSelectedTextIndex(textHit.index);
+         setSelectedImage(null);
+         setSelectedImageIndex(null);
+         setIsDragging(true);
+         setDragStart({ x: point.x - textHit.action.textElement!.position.x, y: point.y - textHit.action.textElement!.position.y });
+         event.preventDefault(); // Prevent default text selection
+       } else {
+         // Then check for image hit
+         const imageHit = hitTestImage(point);
+         if (imageHit) {
+           if (!imageHit.action.imageElement?.imageId) {
+             console.error("Attempted to select an image action with a missing imageId.", imageHit.action);
+             return;
+           }
+ 
+           const handle = getResizeHandle(point, imageHit.action);
+           setSelectedImage(imageHit.action);
+           setSelectedImageIndex(imageHit.index);
+           setSelectedText(null);
+           setSelectedTextIndex(null);
+           
+           if (handle) {
+             setIsResizing(true);
+             setResizeHandle(handle);
+             setDragStart(point); // Use raw point for resize origin
+           } else {
+             setIsDragging(true);
+             // Use offset from top-left for drag origin
+             setDragStart({ x: point.x - imageHit.action.imageElement.position.x, y: point.y - imageHit.action.imageElement.position.y });
+           }
+         } else {
+           // If nothing is hit, clear selections
+           setSelectedText(null);
+           setSelectedTextIndex(null);
+           setSelectedImage(null);
+           setSelectedImageIndex(null);
+         }
+       } 
     }
   };
 
@@ -896,7 +870,17 @@ export function Canvas({
      }
    };
 
+  // --- Pin Toggle Handler ---
+  const handleTextToolbarPinToggle = useCallback(() => {
+    // Removed console.log
+    setIsTextToolbarPinned(prev => !prev);
+  }, []); // Reverted dependency, only needs setter
+
   // --- JSX Rendering --- 
+
+  // Determine toolbar visibility
+  const showTextToolbar = tool === "text" || !!activeTextInput || isTextToolbarPinned;
+  // Removed console.log
 
   return (
     <div 
@@ -905,13 +889,15 @@ export function Canvas({
     >
       <TextToolbar
         ref={toolbarRef}
-        show={tool === "text" || !!activeTextInput} 
+        show={showTextToolbar} // Use the new condition
         color={color}
         onColorChange={onColorChange}
         fontSize={fontSize}
         onFontSizeChange={setFontSize}
         font={font}
         onFontChange={setFont}
+        isPinned={isTextToolbarPinned} // Pass pin state
+        onPinToggle={handleTextToolbarPinToggle} // Pass toggle handler
       />
       <ContextMenu>
         <ContextMenuTrigger asChild>

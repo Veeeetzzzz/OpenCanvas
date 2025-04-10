@@ -20,7 +20,8 @@ interface Document {
 function App() {
   const [tool, setTool] = useState<Tool>('pencil');
   const [color, setColor] = useState('#000000');
-  const [lineWidth, setLineWidth] = useState(5);
+  const [pencilWidth, setPencilWidth] = useState(5);
+  const [eraserWidth, setEraserWidth] = useState(20);
   // State to hold all documents
   const [documents, setDocuments] = useState<Document[]>([]);
   // State to track the ID of the currently active document
@@ -337,10 +338,12 @@ function App() {
               <Toolbar
                 tool={tool}
                 color={color}
-                lineWidth={lineWidth}
+                pencilWidth={pencilWidth}
+                eraserWidth={eraserWidth}
                 onToolChange={setTool}
                 onColorChange={setColor}
-                onLineWidthChange={setLineWidth}
+                onPencilWidthChange={setPencilWidth}
+                onEraserWidthChange={setEraserWidth}
                 onUndo={handleUndo}
                 onRedo={handleRedo}
                 canUndo={currentHistoryIndex > 0}
@@ -351,7 +354,8 @@ function App() {
                 <Canvas
                   tool={tool}
                   color={color}
-                  lineWidth={lineWidth}
+                  pencilWidth={pencilWidth}
+                  eraserWidth={eraserWidth}
                   onColorChange={setColor}
                   onToolChange={setTool}
                   onStateChange={handleStateChange}
