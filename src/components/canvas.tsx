@@ -8,7 +8,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import { Copy, Trash, Pin, PinOff } from "lucide-react"
+import { Copy, Trash } from "lucide-react"
 
 interface CanvasProps {
   tool: Tool;
@@ -32,7 +32,6 @@ export function Canvas({
   pencilWidth,
   eraserWidth,
   onColorChange,
-  onToolChange,
   onStateChange,
   history,
   historyIndex,
