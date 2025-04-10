@@ -23,7 +23,7 @@ export interface TextToolbarProps {
   onPinToggle: () => void;
 }
 
-const PREDEFINED_FONT_SIZES = [8, 12, 16, 20, 24, 36, 48, 64, 72];
+//const PREDEFINED_FONT_SIZES = [8, 12, 16, 20, 24, 36, 48, 64, 72];
 const PREDEFINED_FONTS = ["Arial", "Verdana", "Times New Roman", "Courier New", "Georgia", "Comic Sans MS"];
 
 export const TextToolbar = React.forwardRef<HTMLDivElement, TextToolbarProps>((
