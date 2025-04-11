@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, forwardRef } from "react"
 import { Tool, DrawingState, DrawingAction, Point, TextElement, ImageElement } from "@/lib/types"
 import { useToast } from "@/hooks/use-toast"
 import { TextToolbar } from "@/components/text-toolbar"
@@ -9,6 +9,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 import { Copy, Trash } from "lucide-react"
+import { BackgroundStyle } from "@/components/settings-dialog"
 
 interface CanvasProps {
   tool: Tool;
@@ -22,23 +23,30 @@ interface CanvasProps {
   historyIndex: number;
   imageDataCache: Record<string, string>;
   gridEnabled?: boolean;
+  backgroundColor: string;
+  backgroundStyle: BackgroundStyle;
 }
 
 const DEFAULT_GRID_SIZE = 20; // Define default grid size
+const BACKGROUND_STYLE_COLOR = "#CCCCCC"; // Color for dots/lines/squares
 
-export function Canvas({
-  tool,
-  color,
-  pencilWidth,
-  eraserWidth,
-  onColorChange,
-  onStateChange,
-  history,
-  historyIndex,
-  imageDataCache,
-  gridEnabled = false,
-}: CanvasProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
+  {
+    tool,
+    color,
+    pencilWidth,
+    eraserWidth,
+    onColorChange,
+    onStateChange,
+    history,
+    historyIndex,
+    imageDataCache,
+    gridEnabled = false,
+    backgroundColor,
+    backgroundStyle,
+  },
+  ref
+) => {
   const [context, setContext] = useState<CanvasRenderingContext2D | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
   const [currentAction, setCurrentAction] = useState<DrawingAction | null>(null)
@@ -126,24 +134,64 @@ export function Canvas({
 
   // --- Canvas Redrawing (Memoized) --- 
   const redrawCanvas = useCallback(() => {
-    if (!context || !canvasRef.current) return;
-    const canvasWidth = canvasRef.current.width;
-    const canvasHeight = canvasRef.current.height;
+    const canvas = (ref as React.RefObject<HTMLCanvasElement>)?.current;
+    if (!context || !canvas) return;
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
 
-    context.clearRect(0, 0, canvasWidth, canvasHeight);
+    // 1. Clear & Draw Background Color
+    context.fillStyle = backgroundColor;
+    context.fillRect(0, 0, canvasWidth, canvasHeight);
 
-    // Draw Grid
+    // 2. Draw Background Style (Dots, Squares, Lines)
+    context.save();
+    context.strokeStyle = BACKGROUND_STYLE_COLOR;
+    context.fillStyle = BACKGROUND_STYLE_COLOR;
+    context.lineWidth = 0.5;
+    const styleSize = DEFAULT_GRID_SIZE; // Use grid size for spacing
+
+    if (backgroundStyle === 'dots') {
+      for (let x = styleSize; x < canvasWidth; x += styleSize) {
+        for (let y = styleSize; y < canvasHeight; y += styleSize) {
+          context.beginPath();
+          context.arc(x, y, 1, 0, Math.PI * 2); // Draw small dots
+          context.fill();
+        }
+      }
+    } else if (backgroundStyle === 'squares' || backgroundStyle === 'lines') {
+      // Vertical lines (for squares and lines)
+      for (let x = styleSize; x < canvasWidth; x += styleSize) {
+        context.beginPath();
+        context.moveTo(x, 0);
+        context.lineTo(x, canvasHeight);
+        context.stroke();
+      }
+      // Horizontal lines (for squares only)
+      if (backgroundStyle === 'squares') {
+        for (let y = styleSize; y < canvasHeight; y += styleSize) {
+          context.beginPath();
+          context.moveTo(0, y);
+          context.lineTo(canvasWidth, y);
+          context.stroke();
+        }
+      }
+    }
+    context.restore();
+
+    // 3. Draw Drawing Grid Overlay (if enabled)
     if (gridEnabled) {
-      const gridSize = DEFAULT_GRID_SIZE;
       context.save();
-      context.strokeStyle = "#e0e0e0";
+      context.strokeStyle = "#e0e0e0"; // Lighter color for overlay grid
       context.lineWidth = 0.5;
+      const gridSize = DEFAULT_GRID_SIZE;
+      // Draw vertical lines
       for (let x = gridSize; x < canvasWidth; x += gridSize) {
         context.beginPath();
         context.moveTo(x, 0);
         context.lineTo(x, canvasHeight);
         context.stroke();
       }
+      // Draw horizontal lines
       for (let y = gridSize; y < canvasHeight; y += gridSize) {
         context.beginPath();
         context.moveTo(0, y);
@@ -153,7 +201,7 @@ export function Canvas({
       context.restore();
     }
 
-    // Draw history actions
+    // 4. Draw History Actions (pencil, text, images)
     const currentState = history[historyIndex];
     if (currentState) {
       currentState.actions.forEach(action => {
@@ -210,7 +258,7 @@ export function Canvas({
       });
     }
     
-    // Draw UI elements (selection, resize handles)
+    // 5. Draw UI elements (selection, resize handles)
     context.save();
     // Text Selection Highlight
     if (selectedText?.textElement && tool === 'hand') {
@@ -245,7 +293,7 @@ export function Canvas({
     }
     context.restore();
   // Add dependencies for useCallback
-  }, [context, gridEnabled, history, historyIndex, imageDataCache, tool, selectedText, selectedImage]);
+  }, [context, backgroundColor, backgroundStyle, gridEnabled, history, historyIndex, imageDataCache, tool, selectedText, selectedImage, ref]);
 
   // --- Effects --- 
 
@@ -257,8 +305,8 @@ export function Canvas({
 
   // Effect for setting up canvas context and resize observer
   useEffect(() => {
-    if (canvasRef.current) {
-      const canvas = canvasRef.current;
+    const canvas = (ref as React.RefObject<HTMLCanvasElement>)?.current;
+    if (canvas) {
       const observer = new ResizeObserver(() => {
          canvas.width = canvas.offsetWidth;
          canvas.height = canvas.offsetHeight;
@@ -290,7 +338,7 @@ export function Canvas({
 
       return () => observer.disconnect();
     }
-  }, []); // Run only once on mount
+  }, [ref]); // Run only once on mount
 
   // Effect to handle tool changes 
   useEffect(() => {
@@ -727,7 +775,7 @@ export function Canvas({
   const handlePasteImage = () => {
     // Simplified Paste: Works if original imageId is still in cache.
     // Does NOT add the pasted image data back to cache under the new ID yet.
-    if (!clipboardImage?.imageElement || !canvasRef.current || !context) return;
+    if (!clipboardImage?.imageElement || !ref || !context) return;
 
     // Get the original image URL from the cache using the ID from the clipboard state.
     const cachedUrl = imageDataCache[clipboardImage.imageElement.imageId];
@@ -901,7 +949,7 @@ export function Canvas({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <canvas
-            ref={canvasRef}
+            ref={ref}
             className={`w-full h-full ${ 
               activeTextInput ? 'cursor-text' :
               tool === 'text' ? 'cursor-text' :
@@ -995,4 +1043,6 @@ export function Canvas({
       )}
     </div>
   )
-}
+});
+
+Canvas.displayName = 'Canvas'; // Add display name for DevTools

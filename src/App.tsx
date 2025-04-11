@@ -7,7 +7,9 @@ import { Sidebar } from '@/components/sidebar';
 import { cn } from '@/lib/utils';
 import { Tool, DrawingState, ImageElement, DrawingAction } from '@/lib/types';
 import { useState, useRef, useEffect } from 'react';
-import { SettingsDialog, AppSettings } from "@/components/settings-dialog";
+import { SettingsDialog, AppSettings, BackgroundStyle } from "@/components/settings-dialog";
+import { FileDown } from "lucide-react";
+import { ExportDialog } from "@/components/export-dialog";
 
 // Define the structure for a single document
 interface Document {
@@ -32,8 +34,12 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>({
     gridEnabled: false,
     showTooltips: true,
+    backgroundColor: '#FFFFFF', // Default background color
+    backgroundStyle: 'blank', // Default background style
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false); // State for export dialog
+  const canvasRef = useRef<HTMLCanvasElement>(null); // Create ref for Canvas
 
   // Find the current document based on the ID
   const currentDocument = documents.find(doc => doc.id === currentDocumentId);
@@ -299,6 +305,63 @@ function App() {
     }
   };
 
+  // --- Helper: Trigger Download --- 
+  const triggerDownload = (dataUrl: string, filename: string) => {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- Export Functions --- 
+  const handleExportPNG = () => {
+    if (!canvasRef.current) return;
+    try {
+      const canvas = canvasRef.current;
+      const dataUrl = canvas.toDataURL("image/png");
+      const docName = currentDocument?.name || "Untitled";
+      const filename = `${docName.replace(/\s+/g, '_')}_export.png`;
+      triggerDownload(dataUrl, filename);
+    } catch (error) {
+      console.error("Failed to export canvas as PNG:", error);
+      // TODO: Show toast notification
+    }
+  };
+
+  const handleExportJPEG = () => {
+    if (!canvasRef.current) return;
+    try {
+      const originalCanvas = canvasRef.current;
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = originalCanvas.width;
+      tempCanvas.height = originalCanvas.height;
+      const tempCtx = tempCanvas.getContext('2d');
+
+      if (!tempCtx) {
+        throw new Error("Could not get temporary canvas context");
+      }
+
+      // Draw white background
+      tempCtx.fillStyle = '#FFFFFF';
+      tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+      // Draw original canvas content on top
+      tempCtx.drawImage(originalCanvas, 0, 0);
+
+      // Get data URL as JPEG
+      const dataUrl = tempCanvas.toDataURL("image/jpeg", 0.9); // Quality 0.9
+      const docName = currentDocument?.name || "Untitled";
+      const filename = `${docName.replace(/\s+/g, '_')}_export.jpg`; // Use .jpg extension
+      triggerDownload(dataUrl, filename);
+
+    } catch (error) {
+      console.error("Failed to export canvas as JPEG:", error);
+      // TODO: Show toast notification
+    }
+  };
+
   return (
     <ThemeProvider defaultTheme="light" storageKey="doodle-theme">
       {/* Hidden file input */}
@@ -323,6 +386,15 @@ function App() {
             <div className="flex items-center justify-between p-4 border-b">
               <div></div>
               <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setIsExportDialogOpen(true)}
+                  title="Export Canvas"
+                >
+                  <FileDown className="h-4 w-4 mr-2" />
+                  Export
+                </Button>
                 <Button variant="outline" size="sm" disabled>Share</Button>
                 <Button 
                   variant="outline" 
@@ -352,6 +424,7 @@ function App() {
               />
               <div className={cn("flex-1 h-full relative bg-muted/30")}>
                 <Canvas
+                  ref={canvasRef}
                   tool={tool}
                   color={color}
                   pencilWidth={pencilWidth}
@@ -363,12 +436,20 @@ function App() {
                   historyIndex={currentHistoryIndex}
                   imageDataCache={imageDataCache}
                   gridEnabled={settings.gridEnabled}
+                  backgroundColor={settings.backgroundColor}
+                  backgroundStyle={settings.backgroundStyle}
                 />
               </div>
             </div>
           </main>
         </div>
       </div>
+      <ExportDialog
+        open={isExportDialogOpen}
+        onOpenChange={setIsExportDialogOpen}
+        onExportPNG={handleExportPNG}
+        onExportJPEG={handleExportJPEG}
+      />
       <SettingsDialog
         open={isSettingsOpen}
         onOpenChange={setIsSettingsOpen}
