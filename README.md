@@ -2,12 +2,12 @@
 
 # Demo - https://open-canvas-kappa.vercel.app/
 
-![image](https://github.com/user-attachments/assets/950a4e61-a318-42b1-a5b5-8ac80dae7fe3)
-
-
+![image](https://github.com/user-attachments/assets/037b277d-4ea2-4f92-b1dc-9011a08c5b3f)
 
 ## Features
 
 - Open source & 100% free. Forever.
+- Export current Canvas as JPEG/PNG
 - 100% local storage - offline & private.
-- Share links are unlisted, cannot be enumerated & can be password protected.
+- Colored paper with dot grid, squared, lined or blank styles
+- Share links (coming soon!) are unlisted, cannot be enumerated & can be password protected.
