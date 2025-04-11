@@ -7,7 +7,7 @@ import { Sidebar } from '@/components/sidebar';
 import { cn } from '@/lib/utils';
 import { Tool, DrawingState, ImageElement, DrawingAction } from '@/lib/types';
 import { useState, useRef, useEffect } from 'react';
-import { SettingsDialog, AppSettings, BackgroundStyle } from "@/components/settings-dialog";
+import { SettingsDialog, AppSettings } from "@/components/settings-dialog";
 import { FileDown } from "lucide-react";
 import { ExportDialog } from "@/components/export-dialog";
 
