@@ -10,4 +10,12 @@
 - Export current Canvas as JPEG/PNG
 - 100% local storage - offline & private.
 - Colored paper with dot grid, squared, lined or blank styles
-- Share links (coming soon!) are unlisted, cannot be enumerated & can be password protected.
+
+## Roadmap
+
+- Secret links → unique URLs that let others access a document
+- Real-time collaboration → live syncing between users on the same doc
+
+## Contribution
+
+You can submit your issues/ideas/feedback via the Issues tab. 
