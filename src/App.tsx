@@ -40,6 +40,7 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false); // State for export dialog
   const canvasRef = useRef<HTMLCanvasElement>(null); // Create ref for Canvas
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // State for sidebar collapse
 
   // Find the current document based on the ID
   const currentDocument = documents.find(doc => doc.id === currentDocumentId);
@@ -381,6 +382,8 @@ function App() {
             onSwitchDocument={handleSwitchDocument}
             onDeleteDocument={handleDeleteDocument}
             onCopyDocument={handleCopyDocument}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
           />
           <main className="flex-1 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b">
