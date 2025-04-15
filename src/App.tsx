@@ -41,6 +41,8 @@ function App() {
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false); // State for export dialog
   const canvasRef = useRef<HTMLCanvasElement>(null); // Create ref for Canvas
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // State for sidebar collapse
+  // --- Rename State ---
+  const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
 
   // Find the current document based on the ID
   const currentDocument = documents.find(doc => doc.id === currentDocumentId);
@@ -178,27 +180,23 @@ function App() {
   // Function to delete a document
   const handleDeleteDocument = (docId: string) => {
     setDocuments(docs => {
+      // Filter out the document to be deleted
       const newDocs = docs.filter(doc => doc.id !== docId);
       
-      // If this was the last document, create a new empty one
+      // Check if the list is now empty
       if (newDocs.length === 0) {
-        const newDocId = `doc_${Date.now()}`;
-        const newDocument: Document = {
-          id: newDocId,
-          name: "Untitled",
-          history: [],
-          historyIndex: -1,
-        };
-        setCurrentDocumentId(newDocId);
-        return [newDocument];
+        // If empty, set current ID to null and return the empty array
+        setCurrentDocumentId(null);
+        return []; // No documents left
       }
 
-      // If the deleted document was the current one, switch to another
+      // If the deleted document was the current one, switch to the first remaining
+      // This check only runs if newDocs is NOT empty
       if (currentDocumentId === docId) {
-        const remainingDoc = newDocs[0];
-        setCurrentDocumentId(remainingDoc.id);
+        setCurrentDocumentId(newDocs[0].id); // Switch to the first one in the filtered list
       }
 
+      // Return the updated list of documents
       return newDocs;
     });
   };
@@ -363,6 +361,31 @@ function App() {
     }
   };
 
+  // --- Rename Handlers ---
+  const handleStartRename = (docId: string) => {
+    const docToRename = documents.find(doc => doc.id === docId);
+    if (docToRename) {
+      setRenamingDocId(docId);
+    }
+  };
+
+  const handleConfirmRename = (newName: string) => {
+    if (!renamingDocId) return;
+
+    const finalName = newName.trim() || "Untitled";
+
+    setDocuments(docs =>
+      docs.map(doc =>
+        doc.id === renamingDocId ? { ...doc, name: finalName } : doc
+      )
+    );
+    setRenamingDocId(null);
+  };
+
+  const handleCancelRename = () => {
+    setRenamingDocId(null);
+  };
+
   return (
     <ThemeProvider defaultTheme="light" storageKey="doodle-theme">
       {/* Hidden file input */}
@@ -384,6 +407,10 @@ function App() {
             onCopyDocument={handleCopyDocument}
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
+            renamingDocId={renamingDocId}
+            onStartRename={handleStartRename}
+            onConfirmRename={handleConfirmRename}
+            onCancelRename={handleCancelRename}
           />
           <main className="flex-1 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b">
@@ -409,41 +436,53 @@ function App() {
                 <ModeToggle />
               </div>
             </div>
-            <div className="flex-1 flex">
-              <Toolbar
-                tool={tool}
-                color={color}
-                pencilWidth={pencilWidth}
-                eraserWidth={eraserWidth}
-                onToolChange={setTool}
-                onColorChange={setColor}
-                onPencilWidthChange={setPencilWidth}
-                onEraserWidthChange={setEraserWidth}
-                onUndo={handleUndo}
-                onRedo={handleRedo}
-                canUndo={currentHistoryIndex > 0}
-                canRedo={currentHistoryIndex < currentHistory.length - 1}
-                showTooltips={settings.showTooltips}
-              />
-              <div className={cn("flex-1 h-full relative bg-muted/30")}>
-                <Canvas
-                  ref={canvasRef}
+            {/* Conditional Rendering: Show Toolbar/Canvas OR Placeholder */}
+            {currentDocumentId ? (
+              <div className="flex-1 flex">
+                <Toolbar
                   tool={tool}
                   color={color}
                   pencilWidth={pencilWidth}
                   eraserWidth={eraserWidth}
-                  onColorChange={setColor}
                   onToolChange={setTool}
-                  onStateChange={handleStateChange}
-                  history={currentHistory}
-                  historyIndex={currentHistoryIndex}
-                  imageDataCache={imageDataCache}
-                  gridEnabled={settings.gridEnabled}
-                  backgroundColor={settings.backgroundColor}
-                  backgroundStyle={settings.backgroundStyle}
+                  onColorChange={setColor}
+                  onPencilWidthChange={setPencilWidth}
+                  onEraserWidthChange={setEraserWidth}
+                  onUndo={handleUndo}
+                  onRedo={handleRedo}
+                  canUndo={currentHistoryIndex > 0}
+                  canRedo={currentHistoryIndex < currentHistory.length - 1}
+                  showTooltips={settings.showTooltips}
                 />
+                <div className={cn("flex-1 h-full relative bg-muted/30")}>
+                  <Canvas
+                    ref={canvasRef}
+                    tool={tool}
+                    color={color}
+                    pencilWidth={pencilWidth}
+                    eraserWidth={eraserWidth}
+                    onColorChange={setColor}
+                    onToolChange={setTool}
+                    onStateChange={handleStateChange}
+                    history={currentHistory}
+                    historyIndex={currentHistoryIndex}
+                    imageDataCache={imageDataCache}
+                    gridEnabled={settings.gridEnabled}
+                    backgroundColor={settings.backgroundColor}
+                    backgroundStyle={settings.backgroundStyle}
+                  />
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center h-full bg-muted/20">
+                <h2 className="text-2xl font-semibold text-muted-foreground mb-4">
+                  No Document Selected
+                </h2>
+                <p className="text-muted-foreground">
+                  Click "New Document" in the sidebar to get started.
+                </p>
+              </div>
+            )}
           </main>
         </div>
       </div>
