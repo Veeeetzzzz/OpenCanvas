@@ -8,8 +8,10 @@ import { cn } from '@/lib/utils';
 import { Tool, DrawingState, ImageElement, DrawingAction } from '@/lib/types';
 import { useState, useRef, useEffect } from 'react';
 import { SettingsDialog, AppSettings } from "@/components/settings-dialog";
-import { FileDown } from "lucide-react";
+import { FileDown, HelpCircle } from "lucide-react";
 import { ExportDialog } from "@/components/export-dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { HelpDialog } from "@/components/help-dialog";
 
 // Define the structure for a single document
 interface Document {
@@ -39,6 +41,7 @@ function App() {
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false); // State for export dialog
+  const [isHelpDialogOpen, setIsHelpDialogOpen] = useState(false); // State for help dialog
   const canvasRef = useRef<HTMLCanvasElement>(null); // Create ref for Canvas
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // State for sidebar collapse
   // --- Rename State ---
@@ -433,6 +436,23 @@ function App() {
                 >
                   Settings
                 </Button>
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        size="icon"
+                        onClick={() => setIsHelpDialogOpen(true)}
+                        className="h-9 w-9"
+                      >
+                        <HelpCircle className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>Help / How to Use</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 <ModeToggle />
               </div>
             </div>
@@ -497,6 +517,10 @@ function App() {
         onOpenChange={setIsSettingsOpen}
         onSettingsChange={setSettings}
         currentSettings={settings}
+      />
+      <HelpDialog
+        open={isHelpDialogOpen}
+        onOpenChange={setIsHelpDialogOpen}
       />
     </ThemeProvider>
   );
