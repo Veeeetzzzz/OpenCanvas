@@ -8,10 +8,11 @@ import { cn } from '@/lib/utils';
 import { Tool, DrawingState, ImageElement, DrawingAction } from '@/lib/types';
 import { useState, useRef, useEffect } from 'react';
 import { SettingsDialog, AppSettings } from "@/components/settings-dialog";
-import { FileDown, HelpCircle } from "lucide-react";
+import { FileDown, HelpCircle, ChevronUp, ChevronDown } from "lucide-react";
 import { ExportDialog } from "@/components/export-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HelpDialog } from "@/components/help-dialog";
+import { Settings } from "lucide-react";
 
 // Define the structure for a single document
 interface Document {
@@ -44,6 +45,7 @@ function App() {
   const [isHelpDialogOpen, setIsHelpDialogOpen] = useState(false); // State for help dialog
   const canvasRef = useRef<HTMLCanvasElement>(null); // Create ref for Canvas
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // State for sidebar collapse
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false); // State for header collapse
   // --- Rename State ---
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
 
@@ -416,46 +418,81 @@ function App() {
             onCancelRename={handleCancelRename}
           />
           <main className="flex-1 flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b">
-              <div></div>
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => setIsExportDialogOpen(true)}
-                  title="Export Canvas"
-                >
-                  <FileDown className="h-4 w-4 mr-2" />
-                  Export
-                </Button>
-                <Button variant="outline" size="sm" disabled>Share</Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => setIsSettingsOpen(true)}
-                >
-                  Settings
-                </Button>
-                <TooltipProvider delayDuration={100}>
+            {/* --- Collapsible Header --- */}
+            <div className="flex items-center justify-between p-2 border-b"> {/* Reduced padding */} 
+              {/* Toggle Button */} 
+              <TooltipProvider delayDuration={100}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button 
-                        variant="outline" 
-                        size="icon"
-                        onClick={() => setIsHelpDialogOpen(true)}
-                        className="h-9 w-9"
+                      <Button
+                        variant="ghost"
+                        size="sm" // Slightly larger than icon for better click area
+                        onClick={() => setIsHeaderCollapsed(prev => !prev)}
+                        aria-label={isHeaderCollapsed ? "Expand Header" : "Collapse Header"}
                       >
-                        <HelpCircle className="h-4 w-4" />
+                        {isHeaderCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
-                      <p>Help / How to Use</p>
+                      <p>{isHeaderCollapsed ? "Show Tools" : "Hide Tools"}</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-                <ModeToggle />
-              </div>
+
+              {/* Action Buttons Container (Conditional) */} 
+              {!isHeaderCollapsed && (
+                <div className="flex items-center gap-2">
+                  {/* Export Button */}
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setIsExportDialogOpen(true)}
+                    title="Export Canvas"
+                  >
+                    <FileDown className="h-4 w-4 mr-1" /> {/* Reduced margin */} 
+                    <span className="hidden sm:inline">Export</span> {/* Hide text on small screens? Optional */} 
+                  </Button>
+                  {/* Share Button */}
+                  <Button variant="outline" size="sm" disabled>
+                     <span className="hidden sm:inline">Share</span>
+                  </Button>
+                  {/* Settings Button */}
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setIsSettingsOpen(true)}
+                     title="Settings"
+                  >
+                     <Settings className="h-4 w-4 sm:mr-1" /> {/* Icon only or with text */} 
+                     <span className="hidden sm:inline">Settings</span>
+                  </Button>
+                  {/* Help Button */}
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          variant="outline" 
+                          size="icon"
+                          onClick={() => setIsHelpDialogOpen(true)}
+                          className="h-9 w-9"
+                        >
+                          <HelpCircle className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        <p>Help / How to Use</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  {/* Mode Toggle */}
+                  <ModeToggle />
+                </div>
+              )}
+
+              {/* Add a spacer div if header is collapsed to keep toggle left-aligned */} 
+              {isHeaderCollapsed && <div></div>}
             </div>
+            
             {/* Conditional Rendering: Show Toolbar/Canvas OR Placeholder */}
             {currentDocumentId ? (
               <div className="flex-1 flex">
