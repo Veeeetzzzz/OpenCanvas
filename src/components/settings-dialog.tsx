@@ -18,6 +18,8 @@ export interface AppSettings {
   showTooltips: boolean;
   backgroundColor: string;
   backgroundStyle: BackgroundStyle;
+  canvasWidth: number;
+  canvasHeight: number;
 }
 
 export function SettingsDialog({
@@ -33,6 +35,13 @@ export function SettingsDialog({
     });
   };
 
+  const handleNumberChange = (key: keyof AppSettings, value: string) => {
+    const num = parseInt(value, 10);
+    if (!isNaN(num) && num > 0) {
+      handleSettingChange(key, num);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
@@ -40,6 +49,37 @@ export function SettingsDialog({
           <DialogTitle>App Settings</DialogTitle>
         </DialogHeader>
         <div className="grid gap-6 py-4">
+          <div className="space-y-2">
+            <Label>Canvas Size</Label>
+            <div className="flex items-center gap-2">
+              <Input 
+                id="canvasWidth"
+                type="number"
+                value={currentSettings.canvasWidth}
+                onChange={(e) => handleNumberChange("canvasWidth", e.target.value)}
+                min={100}
+                step={10}
+                className="h-8 text-sm w-full"
+                placeholder="Width"
+              />
+              <span className="text-sm text-muted-foreground">x</span>
+              <Input 
+                id="canvasHeight"
+                type="number"
+                value={currentSettings.canvasHeight}
+                onChange={(e) => handleNumberChange("canvasHeight", e.target.value)}
+                min={100}
+                step={10}
+                className="h-8 text-sm w-full"
+                placeholder="Height"
+              />
+              <span className="text-sm text-muted-foreground">px</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Set the dimensions of the drawing area. May require scrolling.
+            </p>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="bgColor">Background Color</Label>
             <div className="flex items-center gap-2">

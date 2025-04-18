@@ -25,6 +25,8 @@ interface CanvasProps {
   gridEnabled?: boolean;
   backgroundColor: string;
   backgroundStyle: BackgroundStyle;
+  canvasWidth: number;
+  canvasHeight: number;
 }
 
 const DEFAULT_GRID_SIZE = 20; // Define default grid size
@@ -44,6 +46,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     gridEnabled = false,
     backgroundColor,
     backgroundStyle,
+    canvasWidth,
+    canvasHeight,
   },
   ref
 ) => {
@@ -136,14 +140,15 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
   const redrawCanvas = useCallback(() => {
     const canvas = (ref as React.RefObject<HTMLCanvasElement>)?.current;
     if (!context || !canvas) return;
-    const canvasWidth = canvas.width;
-    const canvasHeight = canvas.height;
 
-    // 1. Clear & Draw Background Color
+    // Clear using the actual canvas dimensions set by the effect
+    context.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Draw Background Color (use actual canvas dims)
     context.fillStyle = backgroundColor;
-    context.fillRect(0, 0, canvasWidth, canvasHeight);
+    context.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 2. Draw Background Style (Dots, Squares, Lines)
+    // 2. Draw Background Style (use actual canvas dims)
     context.save();
     context.strokeStyle = BACKGROUND_STYLE_COLOR;
     context.fillStyle = BACKGROUND_STYLE_COLOR;
@@ -151,8 +156,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     const styleSize = DEFAULT_GRID_SIZE; // Use grid size for spacing
 
     if (backgroundStyle === 'dots') {
-      for (let x = styleSize; x < canvasWidth; x += styleSize) {
-        for (let y = styleSize; y < canvasHeight; y += styleSize) {
+      for (let x = styleSize; x < canvas.width; x += styleSize) {
+        for (let y = styleSize; y < canvas.height; y += styleSize) {
           context.beginPath();
           context.arc(x, y, 1, 0, Math.PI * 2); // Draw small dots
           context.fill();
@@ -160,42 +165,42 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
       }
     } else if (backgroundStyle === 'squares' || backgroundStyle === 'lines') {
       // Vertical lines (for squares and lines)
-      for (let x = styleSize; x < canvasWidth; x += styleSize) {
+      for (let x = styleSize; x < canvas.width; x += styleSize) {
         context.beginPath();
         context.moveTo(x, 0);
-        context.lineTo(x, canvasHeight);
+        context.lineTo(x, canvas.height);
         context.stroke();
       }
       // Horizontal lines (for squares only)
       if (backgroundStyle === 'squares') {
-        for (let y = styleSize; y < canvasHeight; y += styleSize) {
+        for (let y = styleSize; y < canvas.height; y += styleSize) {
           context.beginPath();
           context.moveTo(0, y);
-          context.lineTo(canvasWidth, y);
+          context.lineTo(canvas.width, y);
           context.stroke();
         }
       }
     }
     context.restore();
 
-    // 3. Draw Drawing Grid Overlay (if enabled)
+    // 3. Draw Drawing Grid Overlay (use actual canvas dims)
     if (gridEnabled) {
       context.save();
       context.strokeStyle = "#e0e0e0"; // Lighter color for overlay grid
       context.lineWidth = 0.5;
       const gridSize = DEFAULT_GRID_SIZE;
       // Draw vertical lines
-      for (let x = gridSize; x < canvasWidth; x += gridSize) {
+      for (let x = gridSize; x < canvas.width; x += gridSize) {
         context.beginPath();
         context.moveTo(x, 0);
-        context.lineTo(x, canvasHeight);
+        context.lineTo(x, canvas.height);
         context.stroke();
       }
       // Draw horizontal lines
-      for (let y = gridSize; y < canvasHeight; y += gridSize) {
+      for (let y = gridSize; y < canvas.height; y += gridSize) {
         context.beginPath();
         context.moveTo(0, y);
-        context.lineTo(canvasWidth, y);
+        context.lineTo(canvas.width, y);
         context.stroke();
       }
       context.restore();
@@ -293,52 +298,32 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     }
     context.restore();
   // Add dependencies for useCallback
-  }, [context, backgroundColor, backgroundStyle, gridEnabled, history, historyIndex, imageDataCache, tool, selectedText, selectedImage, ref]);
+  }, [context, backgroundColor, backgroundStyle, gridEnabled, history, historyIndex, imageDataCache, tool, selectedText, selectedImage, ref, canvasWidth, canvasHeight]);
 
   // --- Effects --- 
 
-  // Effect for primary redraw trigger
-  useEffect(() => {
-    redrawCanvas();
-    // Depend only on the memoized redrawCanvas function
-  }, [redrawCanvas]);
-
-  // Effect for setting up canvas context and resize observer
+  // Effect for setting up canvas context AND SIZE
   useEffect(() => {
     const canvas = (ref as React.RefObject<HTMLCanvasElement>)?.current;
     if (canvas) {
-      const observer = new ResizeObserver(() => {
-         canvas.width = canvas.offsetWidth;
-         canvas.height = canvas.offsetHeight;
-         const ctx = canvas.getContext("2d");
-         if (ctx) {
-            ctx.lineJoin = "round";
-            ctx.lineCap = "round";
-            setContext(ctx);
-            // No need to call redrawCanvas here, 
-            // setContext will trigger state change -> redrawCanvas effect
-         } else {
-            setContext(null);
-         }
-      });
-      observer.observe(canvas);
+      // Set canvas dimensions directly from props
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
 
-      // Initial context setup
+      // Get/set context
       const ctx = canvas.getContext("2d");
       if (ctx) {
-          ctx.lineJoin = "round";
-          ctx.lineCap = "round";
-          setContext(ctx);
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        setContext(ctx);
+        // Initial draw after setting size and context
+        redrawCanvas(); 
+      } else {
+        setContext(null);
       }
-      
-      // Set initial size
-      canvas.width = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-      // The initial redraw will happen due to the setContext call triggering the other effect
-
-      return () => observer.disconnect();
     }
-  }, [ref]); // Run only once on mount
+    // Depend on dimensions and ref
+  }, [ref, canvasWidth, canvasHeight, redrawCanvas]); // Add redrawCanvas dependency
 
   // Effect to handle tool changes 
   useEffect(() => {
@@ -931,7 +916,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
 
   return (
     <div 
-      className="relative w-full h-full" 
+      className="relative" 
+      style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}
       onContextMenu={handleContextMenu}
     >
       <TextToolbar
@@ -950,7 +936,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
         <ContextMenuTrigger asChild>
           <canvas
             ref={ref}
-            className={`w-full h-full ${ 
+            className={`absolute top-0 left-0 ${ 
               activeTextInput ? 'cursor-text' :
               tool === 'text' ? 'cursor-text' :
               tool === 'hand' 

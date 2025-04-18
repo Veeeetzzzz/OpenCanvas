@@ -39,6 +39,8 @@ function App() {
     showTooltips: true,
     backgroundColor: '#FFFFFF', // Default background color
     backgroundStyle: 'blank', // Default background style
+    canvasWidth: 1920, // Default canvas width
+    canvasHeight: 1080, // Default canvas height
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false); // State for export dialog
@@ -495,7 +497,7 @@ function App() {
             
             {/* Conditional Rendering: Show Toolbar/Canvas OR Placeholder */}
             {currentDocumentId ? (
-              <div className="flex-1 flex">
+              <div className="flex-1 flex overflow-hidden">
                 <Toolbar
                   tool={tool}
                   color={color}
@@ -511,7 +513,7 @@ function App() {
                   canRedo={currentHistoryIndex < currentHistory.length - 1}
                   showTooltips={settings.showTooltips}
                 />
-                <div className={cn("flex-1 h-full relative bg-muted/30")}>
+                <div className={cn("flex-1 h-full relative bg-muted/30 overflow-auto")}>
                   <Canvas
                     ref={canvasRef}
                     tool={tool}
@@ -527,6 +529,8 @@ function App() {
                     gridEnabled={settings.gridEnabled}
                     backgroundColor={settings.backgroundColor}
                     backgroundStyle={settings.backgroundStyle}
+                    canvasWidth={settings.canvasWidth}
+                    canvasHeight={settings.canvasHeight}
                   />
                 </div>
               </div>
