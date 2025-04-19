@@ -16,6 +16,30 @@
 - Secret links → unique URLs that let others access a document
 - Real-time collaboration → live syncing between users on the same doc
 
+## Running Locally
+
+To run OpenCanvas on your local machine:
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/Veeeetzzzz/OpenCanvas.git
+    ```
+2.  **Navigate to the project directory:**
+    ```bash
+    cd OpenCanvas
+    ```
+3.  **Install dependencies:**
+    ```bash
+    npm install
+    # or yarn install
+    ```
+4.  **Start the development server:**
+    ```bash
+    npm run dev
+    # or yarn dev
+    ```
+5.  Open your browser and navigate to the local URL provided (usually `http://localhost:5173`).
+
 ## Contribution
 
 You can submit your issues/ideas/feedback via the Issues tab. 
