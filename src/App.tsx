@@ -5,14 +5,17 @@ import { Canvas } from '@/components/canvas';
 import { Toolbar } from '@/components/toolbar';
 import { Sidebar } from '@/components/sidebar';
 import { cn } from '@/lib/utils';
-import { Tool, DrawingState, ImageElement, DrawingAction } from '@/lib/types';
+import { Tool, DrawingState, ImageElement, DrawingAction, CollaborationEvent } from '@/lib/types';
 import { useState, useRef, useEffect } from 'react';
 import { SettingsDialog, AppSettings } from "@/components/settings-dialog";
-import { FileDown, HelpCircle, ChevronUp, ChevronDown } from "lucide-react";
+import { FileDown, HelpCircle, ChevronUp, ChevronDown, Share2 } from "lucide-react";
 import { ExportDialog } from "@/components/export-dialog";
+import { ShareDialog } from "@/components/share-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HelpDialog } from "@/components/help-dialog";
+import { Toaster } from "@/components/ui/toaster";
 import { Settings } from "lucide-react";
+import { collaborationService } from '@/lib/collaboration';
 
 // Define the structure for a single document
 interface Document {
@@ -45,6 +48,7 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false); // State for export dialog
   const [isHelpDialogOpen, setIsHelpDialogOpen] = useState(false); // State for help dialog
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false); // State for share dialog
   const canvasRef = useRef<HTMLCanvasElement>(null); // Create ref for Canvas
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // State for sidebar collapse
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false); // State for header collapse
@@ -57,28 +61,60 @@ function App() {
   const currentHistory = currentDocument?.history ?? [];
   const currentHistoryIndex = currentDocument?.historyIndex ?? -1;
 
-  // Effect to load documents from sessionStorage on mount
+  // Effect to load documents from sessionStorage on mount and handle shared links
   useEffect(() => {
-    const savedDocs = sessionStorage.getItem('openCanvasDocuments');
-    const savedCurrentId = sessionStorage.getItem('openCanvasCurrentId');
-    if (savedDocs) {
-      try {
-        const parsedDocs: Document[] = JSON.parse(savedDocs);
-        if (Array.isArray(parsedDocs) && parsedDocs.length > 0) {
-          setDocuments(parsedDocs);
-          // Restore the last active document ID, or default to the first one
-          setCurrentDocumentId(savedCurrentId ?? parsedDocs[0]?.id ?? null);
-          return; // Exit early if loaded successfully
+    // Check URL parameters for shared session
+    const urlParams = new URLSearchParams(window.location.search);
+    const shareId = urlParams.get('share');
+    const sharedDocId = urlParams.get('doc');
+
+    if (shareId && sharedDocId) {
+      // This is a shared link - join the collaboration session
+      collaborationService.joinSharedSession(shareId).then((success) => {
+        if (success) {
+          // Create or load the shared document
+          const sharedDoc: Document = {
+            id: sharedDocId,
+            name: 'Shared Document',
+            history: [],
+            historyIndex: -1,
+          };
+          setDocuments([sharedDoc]);
+          setCurrentDocumentId(sharedDocId);
+          console.log('Joined shared session successfully');
+        } else {
+          console.error('Failed to join shared session');
+          // Fall back to normal loading
+          loadNormalSession();
         }
-      } catch (error) {
-        console.error("Failed to parse documents from sessionStorage:", error);
-        // Clear potentially corrupted data
-        sessionStorage.removeItem('openCanvasDocuments');
-        sessionStorage.removeItem('openCanvasCurrentId');
-      }
+      });
+    } else {
+      // Normal session loading
+      loadNormalSession();
     }
-    // If no saved data or parsing failed, initialize with one new document
-    handleNewDocument();
+
+    function loadNormalSession() {
+      const savedDocs = sessionStorage.getItem('openCanvasDocuments');
+      const savedCurrentId = sessionStorage.getItem('openCanvasCurrentId');
+      if (savedDocs) {
+        try {
+          const parsedDocs: Document[] = JSON.parse(savedDocs);
+          if (Array.isArray(parsedDocs) && parsedDocs.length > 0) {
+            setDocuments(parsedDocs);
+            // Restore the last active document ID, or default to the first one
+            setCurrentDocumentId(savedCurrentId ?? parsedDocs[0]?.id ?? null);
+            return; // Exit early if loaded successfully
+          }
+        } catch (error) {
+          console.error("Failed to parse documents from sessionStorage:", error);
+          // Clear potentially corrupted data
+          sessionStorage.removeItem('openCanvasDocuments');
+          sessionStorage.removeItem('openCanvasCurrentId');
+        }
+      }
+      // If no saved data or parsing failed, initialize with one new document
+      handleNewDocument();
+    }
   }, []); // Empty dependency array ensures this runs only once on mount
 
   // Effect to save documents and current ID to sessionStorage whenever they change
@@ -88,6 +124,21 @@ function App() {
         sessionStorage.setItem('openCanvasCurrentId', currentDocumentId);
     }
   }, [documents, currentDocumentId]);
+
+  // Effect to handle collaboration events
+  useEffect(() => {
+    const handleCollaborationEvent = (event: CollaborationEvent) => {
+      if (event.type === 'drawing') {
+        // Apply remote drawing changes
+        const { update, imageData } = event.data;
+        handleStateChange(update, imageData);
+      }
+    };
+
+    collaborationService.onEvent(handleCollaborationEvent);
+
+    // Cleanup is not needed as the service manages its own callbacks
+  }, []);
 
 
   // Update state change handler to optionally accept image data for caching
@@ -134,6 +185,14 @@ function App() {
       newDocs[docIndex] = updatedDoc;
       return newDocs;
     });
+
+    // Broadcast to collaborators if in a shared session
+    if (collaborationService.isInSharedSession()) {
+      collaborationService.broadcastEvent({
+        type: 'drawing',
+        data: { update, imageData: pastedImageDataUrl }
+      });
+    }
   };
 
   // Update undo handler
@@ -455,8 +514,15 @@ function App() {
                     <span className="hidden sm:inline">Export</span> {/* Hide text on small screens? Optional */} 
                   </Button>
                   {/* Share Button */}
-                  <Button variant="outline" size="sm" disabled>
-                     <span className="hidden sm:inline">Share</span>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setIsShareDialogOpen(true)}
+                    disabled={!currentDocumentId}
+                    title="Share Document"
+                  >
+                    <Share2 className="h-4 w-4 sm:mr-1" />
+                    <span className="hidden sm:inline">Share</span>
                   </Button>
                   {/* Settings Button */}
                   <Button 
@@ -563,6 +629,15 @@ function App() {
         open={isHelpDialogOpen}
         onOpenChange={setIsHelpDialogOpen}
       />
+      {currentDocument && (
+        <ShareDialog
+          isOpen={isShareDialogOpen}
+          onOpenChange={setIsShareDialogOpen}
+          documentId={currentDocument.id}
+          documentName={currentDocument.name}
+        />
+      )}
+      <Toaster />
     </ThemeProvider>
   );
 }

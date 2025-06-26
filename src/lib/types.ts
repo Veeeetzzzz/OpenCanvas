@@ -33,3 +33,28 @@ export type DrawingState = {
   actions: DrawingAction[];
   currentAction: DrawingAction | null;
 }
+
+// New types for collaboration
+export type CollaborationUser = {
+  id: string;
+  name: string;
+  color: string;
+  cursor?: Point;
+};
+
+export type SharedDocument = {
+  id: string;
+  name: string;
+  history: DrawingState[];
+  historyIndex: number;
+  lastModified: number;
+  isShared: boolean;
+  shareId?: string; // Secret share identifier
+};
+
+export type CollaborationEvent = {
+  type: 'drawing' | 'cursor' | 'document_update' | 'user_join' | 'user_leave';
+  userId: string;
+  data: any;
+  timestamp: number;
+};
