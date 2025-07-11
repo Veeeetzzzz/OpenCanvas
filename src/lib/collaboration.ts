@@ -173,7 +173,17 @@ class CollaborationService {
 
   // Private helper methods
   private generateShareId(): string {
-    return 'share_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+    // Use crypto.getRandomValues for cryptographic security
+    const array = new Uint8Array(12); // 96 bits of entropy
+    crypto.getRandomValues(array);
+    
+    // Convert to base36 for URL-safe characters
+    const randomPart = Array.from(array)
+      .map(b => b.toString(36).padStart(2, '0'))
+      .join('')
+      .substr(0, 16); // Take first 16 chars for consistency
+      
+    return 'share_' + randomPart;
   }
 
   private generateUserId(): string {
