@@ -54,6 +54,22 @@ function App() {
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false); // State for header collapse
   // --- Rename State ---
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
+  const safeSessionGet = (key: string) => {
+    try {
+      return sessionStorage.getItem(key);
+    } catch (error) {
+      console.error("Failed to read sessionStorage:", error);
+      return null;
+    }
+  };
+
+  const safeSessionSet = (key: string, value: string) => {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch (error) {
+      console.error("Failed to write sessionStorage:", error);
+    }
+  };
 
   // Find the current document based on the ID
   const currentDocument = documents.find(doc => doc.id === currentDocumentId);
@@ -67,10 +83,13 @@ function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const shareId = urlParams.get('share');
     const sharedDocId = urlParams.get('doc');
+    let isActive = true;
 
-    if (shareId && sharedDocId) {
-      // This is a shared link - join the collaboration session
-      collaborationService.joinSharedSession(shareId).then((success) => {
+    const initializeSession = async () => {
+      if (shareId && sharedDocId) {
+        // This is a shared link - join the collaboration session
+        const success = await collaborationService.joinSharedSession(shareId);
+        if (!isActive) return;
         if (success) {
           // Create or load the shared document
           const sharedDoc: Document = {
@@ -87,15 +106,17 @@ function App() {
           // Fall back to normal loading
           loadNormalSession();
         }
-      });
-    } else {
-      // Normal session loading
-      loadNormalSession();
-    }
+      } else {
+        // Normal session loading
+        loadNormalSession();
+      }
+    };
+
+    initializeSession();
 
     function loadNormalSession() {
-      const savedDocs = sessionStorage.getItem('openCanvasDocuments');
-      const savedCurrentId = sessionStorage.getItem('openCanvasCurrentId');
+      const savedDocs = safeSessionGet('openCanvasDocuments');
+      const savedCurrentId = safeSessionGet('openCanvasCurrentId');
       if (savedDocs) {
         try {
           const parsedDocs: Document[] = JSON.parse(savedDocs);
@@ -107,21 +128,29 @@ function App() {
           }
         } catch (error) {
           console.error("Failed to parse documents from sessionStorage:", error);
-          // Clear potentially corrupted data
-          sessionStorage.removeItem('openCanvasDocuments');
-          sessionStorage.removeItem('openCanvasCurrentId');
+          try {
+            // Clear potentially corrupted data
+            sessionStorage.removeItem('openCanvasDocuments');
+            sessionStorage.removeItem('openCanvasCurrentId');
+          } catch (removeError) {
+            console.error("Failed to clear sessionStorage:", removeError);
+          }
         }
       }
       // If no saved data or parsing failed, initialize with one new document
       handleNewDocument();
     }
+
+    return () => {
+      isActive = false;
+    };
   }, []); // Empty dependency array ensures this runs only once on mount
 
   // Effect to save documents and current ID to sessionStorage whenever they change
   useEffect(() => {
     if (documents.length > 0 && currentDocumentId) {
-        sessionStorage.setItem('openCanvasDocuments', JSON.stringify(documents));
-        sessionStorage.setItem('openCanvasCurrentId', currentDocumentId);
+        safeSessionSet('openCanvasDocuments', JSON.stringify(documents));
+        safeSessionSet('openCanvasCurrentId', currentDocumentId);
     }
   }, [documents, currentDocumentId]);
 
@@ -135,9 +164,11 @@ function App() {
       }
     };
 
-    collaborationService.onEvent(handleCollaborationEvent);
+    const unsubscribe = collaborationService.onEvent(handleCollaborationEvent);
 
-    // Cleanup is not needed as the service manages its own callbacks
+    return () => {
+      unsubscribe?.();
+    };
   }, []);
 
 

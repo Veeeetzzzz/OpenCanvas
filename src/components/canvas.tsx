@@ -70,6 +70,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
   const [activeTextInput, setActiveTextInput] = useState<{ position: Point; initialValue: string; width?: number; height?: number } | null>(null)
   const [hoveredResizeHandle, setHoveredResizeHandle] = useState<string | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
+  const drawGenerationRef = useRef(0)
   const [isTextToolbarPinned, setIsTextToolbarPinned] = useState(false)
 
   // --- Tool State Cleanup ---
@@ -140,6 +141,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
   const redrawCanvas = useCallback(() => {
     const canvas = (ref as React.RefObject<HTMLCanvasElement>)?.current;
     if (!context || !canvas) return;
+    const drawGeneration = ++drawGenerationRef.current;
 
     // Clear using the actual canvas dimensions set by the effect
     context.clearRect(0, 0, canvas.width, canvas.height);
@@ -235,28 +237,46 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
           if (imageUrl) {
             const img = new Image();
             img.src = imageUrl;
+            const drawImage = () => {
+              if (drawGenerationRef.current !== drawGeneration) return;
+              if (!action.imageElement) return;
+              context.drawImage(
+                img,
+                action.imageElement.position.x,
+                action.imageElement.position.y,
+                action.imageElement.width,
+                action.imageElement.height
+              );
+            };
             // Attempt to draw synchronously if already loaded, else use onload
             if (img.complete && img.naturalHeight !== 0) {
-                 context.drawImage(img, action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+              drawImage();
             } else {
-                img.onload = () => {
-                    if (action.imageElement) { // Check again in case action changed
-                       context.drawImage(img, action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
-                    }
-                };
-                img.onerror = () => {
-                    console.error("Failed to load image for drawing:", imageUrl);
-                     // Draw placeholder on error
-                     if (action.imageElement) { // Check if element exists before accessing props
-                      context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
-                      context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
-                     }
-                }
+              img.onload = () => {
+                drawImage();
+              };
+              img.onerror = () => {
+                if (drawGenerationRef.current !== drawGeneration) return;
+                if (!action.imageElement) return;
+                console.error("Failed to load image for drawing:", imageUrl);
+                // Draw placeholder on error
+                context.strokeRect(
+                  action.imageElement.position.x,
+                  action.imageElement.position.y,
+                  action.imageElement.width,
+                  action.imageElement.height
+                );
+                context.fillText(
+                  "?",
+                  action.imageElement.position.x + action.imageElement.width / 2,
+                  action.imageElement.position.y + action.imageElement.height / 2
+                );
+              }
             }
-        } else if (action.imageElement) { // Added check for imageElement here too
-             // Draw placeholder if URL missing
-             context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
-             context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
+          } else {
+            // Draw placeholder if URL missing
+            context.strokeRect(action.imageElement.position.x, action.imageElement.position.y, action.imageElement.width, action.imageElement.height);
+            context.fillText("?", action.imageElement.position.x + action.imageElement.width / 2, action.imageElement.position.y + action.imageElement.height / 2);
           }
         }
         context.restore();

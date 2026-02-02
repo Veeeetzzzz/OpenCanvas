@@ -11,6 +11,10 @@ class CollaborationService {
   private onUsersChangeCallbacks: ((users: CollaborationUser[]) => void)[] = [];
   private broadcastChannel: BroadcastChannel | null = null;
   private websocket: WebSocket | null = null;
+  private storageListener: ((event: StorageEvent) => void) | null = null;
+  private pollIntervalId: number | null = null;
+  private communicationReady = false;
+  private activeShareId: string | null = null;
   
   // Simple coordination using a shared storage approach
   private readonly STORAGE_KEY_PREFIX = 'opencanvas_collab_';
@@ -36,11 +40,15 @@ class CollaborationService {
       lastActive: Date.now()
     };
     
-    // Use sessionStorage for temporary sharing
-    sessionStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sharedDocInfo));
-    
-    // Also store in localStorage as backup for cross-tab communication
-    localStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sharedDocInfo));
+    try {
+      // Use sessionStorage for temporary sharing
+      sessionStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sharedDocInfo));
+      
+      // Also store in localStorage as backup for cross-tab communication
+      localStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sharedDocInfo));
+    } catch (error) {
+      console.error('Failed to store shared session info:', error);
+    }
 
     // Set up communication channels
     this.setupCommunication();
@@ -121,11 +129,17 @@ class CollaborationService {
   // Subscribe to collaboration events
   onEvent(callback: (event: CollaborationEvent) => void) {
     this.onEventCallbacks.push(callback);
+    return () => {
+      this.onEventCallbacks = this.onEventCallbacks.filter(existing => existing !== callback);
+    };
   }
 
   // Subscribe to user list changes
   onUsersChange(callback: (users: CollaborationUser[]) => void) {
     this.onUsersChangeCallbacks.push(callback);
+    return () => {
+      this.onUsersChangeCallbacks = this.onUsersChangeCallbacks.filter(existing => existing !== callback);
+    };
   }
 
   // Get current user info
@@ -148,11 +162,7 @@ class CollaborationService {
       });
     }
 
-    // Close broadcast channel
-    if (this.broadcastChannel) {
-      this.broadcastChannel.close();
-      this.broadcastChannel = null;
-    }
+    this.teardownCommunication();
 
     // Close websocket if connected
     if (this.websocket) {
@@ -164,6 +174,8 @@ class CollaborationService {
     this.connectedUsers.clear();
     this.shareId = null;
     this.currentUser = null;
+    this.activeShareId = null;
+    this.communicationReady = false;
   }
 
   // Check if currently in a shared session
@@ -197,6 +209,13 @@ class CollaborationService {
 
   private setupCommunication() {
     if (!this.shareId) return;
+    if (this.communicationReady && this.activeShareId === this.shareId) return;
+    if (this.activeShareId && this.activeShareId !== this.shareId) {
+      this.teardownCommunication();
+    }
+
+    this.activeShareId = this.shareId;
+    this.communicationReady = true;
 
     // Set up BroadcastChannel for same-origin communication
     this.setupBroadcastChannel();
@@ -217,6 +236,10 @@ class CollaborationService {
     if (!this.shareId) return;
 
     try {
+      if (this.broadcastChannel) {
+        this.broadcastChannel.close();
+        this.broadcastChannel = null;
+      }
       this.broadcastChannel = new BroadcastChannel(`opencanvas_${this.shareId}`);
       
       this.broadcastChannel.addEventListener('message', (event) => {
@@ -228,8 +251,10 @@ class CollaborationService {
   }
 
   private setupStorageListener() {
+    if (this.storageListener) return;
+
     // Listen for storage events (works across tabs)
-    window.addEventListener('storage', (event) => {
+    this.storageListener = (event) => {
       if (!event.key || !event.key.startsWith(`${this.STORAGE_KEY_PREFIX}event_`)) return;
       if (!event.newValue) return;
       
@@ -241,10 +266,12 @@ class CollaborationService {
       } catch (error) {
         console.error('Error parsing storage event:', error);
       }
-    });
+    };
+
+    window.addEventListener('storage', this.storageListener);
 
     // Also poll for events in case storage events don't fire
-    setInterval(() => {
+    this.pollIntervalId = window.setInterval(() => {
       this.pollForEvents();
     }, 1000);
   }
@@ -284,11 +311,19 @@ class CollaborationService {
       );
 
       // Sort by timestamp and keep only the latest 10
-      const sortedKeys = eventKeys.sort((a, b) => {
-        const timeA = parseInt(a.split('_')[3]) || 0;
-        const timeB = parseInt(b.split('_')[3]) || 0;
-        return timeB - timeA;
-      });
+      const sortedKeys = eventKeys
+        .map(key => {
+          try {
+            const raw = localStorage.getItem(key);
+            const parsed = raw ? JSON.parse(raw) : null;
+            const timestamp = typeof parsed?.timestamp === 'number' ? parsed.timestamp : 0;
+            return { key, timestamp };
+          } catch {
+            return { key, timestamp: 0 };
+          }
+        })
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .map(entry => entry.key);
 
       // Remove old events (keep only last 10)
       sortedKeys.slice(10).forEach(key => {
@@ -296,6 +331,23 @@ class CollaborationService {
       });
     } catch (error) {
       console.error('Error cleaning up events:', error);
+    }
+  }
+
+  private teardownCommunication() {
+    if (this.storageListener) {
+      window.removeEventListener('storage', this.storageListener);
+      this.storageListener = null;
+    }
+
+    if (this.pollIntervalId !== null) {
+      window.clearInterval(this.pollIntervalId);
+      this.pollIntervalId = null;
+    }
+
+    if (this.broadcastChannel) {
+      this.broadcastChannel.close();
+      this.broadcastChannel = null;
     }
   }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,17 +21,29 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
   const [isGenerating, setIsGenerating] = useState(false);
   const [connectedUsers, setConnectedUsers] = useState<CollaborationUser[]>([]);
   const { toast } = useToast();
+  const isSharing = collaborationService.isInSharedSession();
+  const currentUser = collaborationService.getCurrentUser();
+
+  useEffect(() => {
+    if (!isSharing || !isOpen) {
+      return;
+    }
+
+    const unsubscribe = collaborationService.onUsersChange((users) => {
+      setConnectedUsers(users);
+    });
+    setConnectedUsers(collaborationService.getConnectedUsers());
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [isSharing, isOpen]);
 
   const handleGenerateLink = async () => {
     setIsGenerating(true);
     try {
       const link = collaborationService.generateShareLink(documentId);
       setShareLink(link);
-      
-      // Subscribe to user changes
-      collaborationService.onUsersChange((users) => {
-        setConnectedUsers(users);
-      });
 
       toast({
         title: "Share link generated!",
@@ -73,9 +85,6 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
       description: "The document is no longer shared.",
     });
   };
-
-  const isSharing = collaborationService.isInSharedSession();
-  const currentUser = collaborationService.getCurrentUser();
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
