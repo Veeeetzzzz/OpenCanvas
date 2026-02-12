@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,9 +20,16 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
   const [shareLink, setShareLink] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [connectedUsers, setConnectedUsers] = useState<CollaborationUser[]>([]);
+  const isMountedRef = useRef(true);
   const { toast } = useToast();
   const isSharing = collaborationService.isInSharedSession();
   const currentUser = collaborationService.getCurrentUser();
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isSharing || !isOpen) {
@@ -39,35 +46,47 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
     };
   }, [isSharing, isOpen]);
 
-  const handleGenerateLink = async () => {
+  const handleGenerateLink = () => {
     setIsGenerating(true);
     try {
       const link = collaborationService.generateShareLink(documentId);
+      if (!isMountedRef.current) return;
       setShareLink(link);
 
       toast({
         title: "Share link generated!",
         description: "Anyone with this link can collaborate on your document.",
       });
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to generate share link. Please try again.",
         variant: "destructive",
       });
     } finally {
-      setIsGenerating(false);
+      if (isMountedRef.current) {
+        setIsGenerating(false);
+      }
     }
   };
 
   const handleCopyLink = async () => {
+    if (!shareLink) {
+      toast({
+        title: "No link available",
+        description: "Generate a share link before copying.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       await navigator.clipboard.writeText(shareLink);
       toast({
         title: "Link copied!",
         description: "The share link has been copied to your clipboard.",
       });
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to copy link to clipboard.",
@@ -125,7 +144,7 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
                     readOnly
                     className="font-mono text-sm"
                   />
-                  <Button size="sm" onClick={handleCopyLink}>
+                  <Button size="sm" onClick={handleCopyLink} disabled={!shareLink}>
                     <Copy className="h-4 w-4" />
                   </Button>
                 </div>

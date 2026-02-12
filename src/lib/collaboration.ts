@@ -3,6 +3,19 @@ import { CollaborationEvent, CollaborationUser } from './types';
 // Cross-browser collaboration using WebSocket and localStorage fallback
 // Works across different browser contexts including private/incognito tabs
 
+const VALID_COLLABORATION_TYPES = new Set(['drawing', 'cursor', 'document_update', 'user_join', 'user_leave']);
+
+export function isCollaborationEventPayload(value: unknown): value is CollaborationEvent {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<CollaborationEvent>;
+  return (
+    typeof candidate.userId === 'string' &&
+    typeof candidate.timestamp === 'number' &&
+    typeof candidate.type === 'string' &&
+    VALID_COLLABORATION_TYPES.has(candidate.type)
+  );
+}
+
 class CollaborationService {
   private shareId: string | null = null;
   private currentUser: CollaborationUser | null = null;
@@ -13,6 +26,7 @@ class CollaborationService {
   private websocket: WebSocket | null = null;
   private storageListener: ((event: StorageEvent) => void) | null = null;
   private pollIntervalId: number | null = null;
+  private broadcastListener: ((event: MessageEvent) => void) | null = null;
   private communicationReady = false;
   private activeShareId: string | null = null;
   
@@ -59,6 +73,11 @@ class CollaborationService {
 
   // Join a shared session from a link
   async joinSharedSession(shareId: string, userName?: string): Promise<boolean> {
+    if (!this.isValidShareId(shareId)) {
+      console.error('Invalid share ID format:', shareId);
+      return false;
+    }
+
     this.shareId = shareId;
     
     this.currentUser = {
@@ -76,10 +95,13 @@ class CollaborationService {
         throw new Error('Shared session not found');
       }
 
-      const sessionInfo = JSON.parse(hostInfo);
+      const sessionInfo = this.safeParse(hostInfo);
+      if (!sessionInfo || typeof sessionInfo !== 'object') {
+        throw new Error('Shared session data is malformed');
+      }
       
       // Update last active time
-      sessionInfo.lastActive = Date.now();
+      (sessionInfo as Record<string, unknown>).lastActive = Date.now();
       localStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sessionInfo));
       sessionStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sessionInfo));
 
@@ -237,14 +259,22 @@ class CollaborationService {
 
     try {
       if (this.broadcastChannel) {
+        if (this.broadcastListener) {
+          this.broadcastChannel.removeEventListener('message', this.broadcastListener);
+          this.broadcastListener = null;
+        }
         this.broadcastChannel.close();
         this.broadcastChannel = null;
       }
       this.broadcastChannel = new BroadcastChannel(`opencanvas_${this.shareId}`);
       
-      this.broadcastChannel.addEventListener('message', (event) => {
+      this.broadcastListener = (event: MessageEvent) => {
+        if (!this.isCollaborationEvent(event.data)) {
+          return;
+        }
         this.handleCollaborationEvent(event.data);
-      });
+      };
+      this.broadcastChannel.addEventListener('message', this.broadcastListener);
     } catch (error) {
       console.warn('BroadcastChannel not supported:', error);
     }
@@ -259,9 +289,11 @@ class CollaborationService {
       if (!event.newValue) return;
       
       try {
-        const eventData = JSON.parse(event.newValue);
-        if (eventData.shareId === this.shareId) {
-          this.handleCollaborationEvent(eventData.event);
+        const eventData = this.safeParse(event.newValue);
+        if (!eventData || typeof eventData !== 'object') return;
+        const parsedEventData = eventData as { shareId?: unknown; event?: unknown };
+        if (parsedEventData.shareId === this.shareId && this.isCollaborationEvent(parsedEventData.event)) {
+          this.handleCollaborationEvent(parsedEventData.event);
         }
       } catch (error) {
         console.error('Error parsing storage event:', error);
@@ -289,11 +321,18 @@ class CollaborationService {
       const now = Date.now();
       eventKeys.forEach(key => {
         try {
-          const eventData = JSON.parse(localStorage.getItem(key) || '{}');
-          if (eventData.timestamp > now - 10000) { // Last 10 seconds
-            this.handleCollaborationEvent(eventData.event);
+          const raw = localStorage.getItem(key);
+          const eventData = raw ? this.safeParse(raw) : null;
+          if (!eventData || typeof eventData !== 'object') return;
+          const parsedEventData = eventData as { timestamp?: unknown; event?: unknown };
+          if (
+            typeof parsedEventData.timestamp === 'number' &&
+            parsedEventData.timestamp > now - 10000 &&
+            this.isCollaborationEvent(parsedEventData.event)
+          ) { // Last 10 seconds
+            this.handleCollaborationEvent(parsedEventData.event);
           }
-        } catch (error) {
+        } catch {
           // Ignore parsing errors for individual events
         }
       });
@@ -346,12 +385,19 @@ class CollaborationService {
     }
 
     if (this.broadcastChannel) {
+      if (this.broadcastListener) {
+        this.broadcastChannel.removeEventListener('message', this.broadcastListener);
+        this.broadcastListener = null;
+      }
       this.broadcastChannel.close();
       this.broadcastChannel = null;
     }
   }
 
   private handleCollaborationEvent(collaborationEvent: CollaborationEvent) {
+    if (!this.isCollaborationEvent(collaborationEvent)) {
+      return;
+    }
     // Don't process events from ourselves
     if (collaborationEvent.userId === this.currentUser?.id) return;
     
@@ -391,6 +437,22 @@ class CollaborationService {
         console.error('Error in users change callback:', error);
       }
     });
+  }
+
+  private safeParse(raw: string): unknown {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  private isValidShareId(shareId: string): boolean {
+    return /^share_[a-z0-9]+$/i.test(shareId);
+  }
+
+  private isCollaborationEvent(value: unknown): value is CollaborationEvent {
+    return isCollaborationEventPayload(value);
   }
 }
 

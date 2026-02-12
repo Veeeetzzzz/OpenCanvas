@@ -6,7 +6,7 @@ import { Toolbar } from '@/components/toolbar';
 import { Sidebar } from '@/components/sidebar';
 import { cn } from '@/lib/utils';
 import { Tool, DrawingState, ImageElement, DrawingAction, CollaborationEvent } from '@/lib/types';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { SettingsDialog, AppSettings } from "@/components/settings-dialog";
 import { FileDown, HelpCircle, ChevronUp, ChevronDown, Share2 } from "lucide-react";
 import { ExportDialog } from "@/components/export-dialog";
@@ -16,6 +16,7 @@ import { HelpDialog } from "@/components/help-dialog";
 import { Toaster } from "@/components/ui/toaster";
 import { Settings } from "lucide-react";
 import { collaborationService } from '@/lib/collaboration';
+import { resolveDeleteDocumentState } from '@/lib/document-state';
 
 // Define the structure for a single document
 interface Document {
@@ -54,6 +55,8 @@ function App() {
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false); // State for header collapse
   // --- Rename State ---
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
+  const currentDocumentIdRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
   const safeSessionGet = (key: string) => {
     try {
       return sessionStorage.getItem(key);
@@ -76,6 +79,16 @@ function App() {
   // Derive current history and index from the current document
   const currentHistory = currentDocument?.history ?? [];
   const currentHistoryIndex = currentDocument?.historyIndex ?? -1;
+
+  useEffect(() => {
+    currentDocumentIdRef.current = currentDocumentId;
+  }, [currentDocumentId]);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Effect to load documents from sessionStorage on mount and handle shared links
   useEffect(() => {
@@ -115,12 +128,14 @@ function App() {
     initializeSession();
 
     function loadNormalSession() {
+      if (!isActive) return;
       const savedDocs = safeSessionGet('openCanvasDocuments');
       const savedCurrentId = safeSessionGet('openCanvasCurrentId');
       if (savedDocs) {
         try {
           const parsedDocs: Document[] = JSON.parse(savedDocs);
           if (Array.isArray(parsedDocs) && parsedDocs.length > 0) {
+            if (!isActive) return;
             setDocuments(parsedDocs);
             // Restore the last active document ID, or default to the first one
             setCurrentDocumentId(savedCurrentId ?? parsedDocs[0]?.id ?? null);
@@ -138,7 +153,18 @@ function App() {
         }
       }
       // If no saved data or parsing failed, initialize with one new document
-      handleNewDocument();
+      if (!isActive) return;
+      const newDocId = `doc_${Date.now()}`;
+      const newDocument: Document = {
+        id: newDocId,
+        name: "Document 1",
+        history: [],
+        historyIndex: -1,
+      };
+      setDocuments([newDocument]);
+      setCurrentDocumentId(newDocId);
+      setTool('pencil');
+      setColor('#000000');
     }
 
     return () => {
@@ -154,27 +180,10 @@ function App() {
     }
   }, [documents, currentDocumentId]);
 
-  // Effect to handle collaboration events
-  useEffect(() => {
-    const handleCollaborationEvent = (event: CollaborationEvent) => {
-      if (event.type === 'drawing') {
-        // Apply remote drawing changes
-        const { update, imageData } = event.data;
-        handleStateChange(update, imageData);
-      }
-    };
-
-    const unsubscribe = collaborationService.onEvent(handleCollaborationEvent);
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, []);
-
-
   // Update state change handler to optionally accept image data for caching
-  const handleStateChange = (update: DrawingState | DrawingAction, pastedImageDataUrl?: string) => {
-    if (!currentDocumentId) return; 
+  const handleStateChange = useCallback((update: DrawingState | DrawingAction, pastedImageDataUrl?: string) => {
+    const activeDocumentId = currentDocumentIdRef.current;
+    if (!activeDocumentId) return;
 
     // Update image cache first if necessary
     if (pastedImageDataUrl && !('actions' in update) && update.imageElement) {
@@ -184,7 +193,7 @@ function App() {
 
     // Now update the documents state (history)
     setDocuments(docs => {
-      const docIndex = docs.findIndex(d => d.id === currentDocumentId);
+      const docIndex = docs.findIndex(d => d.id === activeDocumentId);
       if (docIndex === -1) return docs; // Should not happen
 
       const currentDoc = docs[docIndex];
@@ -224,7 +233,31 @@ function App() {
         data: { update, imageData: pastedImageDataUrl }
       });
     }
-  };
+  }, []);
+
+  // Effect to handle collaboration events
+  useEffect(() => {
+    const handleCollaborationEvent = (event: CollaborationEvent) => {
+      if (event.type !== 'drawing') {
+        return;
+      }
+
+      const data = event.data;
+      if (!data || typeof data !== 'object' || !('update' in data)) {
+        console.warn('Received malformed drawing event:', event);
+        return;
+      }
+
+      const imageData = typeof data.imageData === 'string' ? data.imageData : undefined;
+      handleStateChange(data.update as DrawingState | DrawingAction, imageData);
+    };
+
+    const unsubscribe = collaborationService.onEvent(handleCollaborationEvent);
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [handleStateChange]);
 
   // Update undo handler
   const handleUndo = () => {
@@ -276,26 +309,9 @@ function App() {
 
   // Function to delete a document
   const handleDeleteDocument = (docId: string) => {
-    setDocuments(docs => {
-      // Filter out the document to be deleted
-      const newDocs = docs.filter(doc => doc.id !== docId);
-      
-      // Check if the list is now empty
-      if (newDocs.length === 0) {
-        // If empty, set current ID to null and return the empty array
-        setCurrentDocumentId(null);
-        return []; // No documents left
-      }
-
-      // If the deleted document was the current one, switch to the first remaining
-      // This check only runs if newDocs is NOT empty
-      if (currentDocumentId === docId) {
-        setCurrentDocumentId(newDocs[0].id); // Switch to the first one in the filtered list
-      }
-
-      // Return the updated list of documents
-      return newDocs;
-    });
+    const { nextDocs, nextCurrentId } = resolveDeleteDocumentState(documents, currentDocumentId, docId);
+    setDocuments(nextDocs);
+    setCurrentDocumentId(nextCurrentId);
   };
 
   // Function to copy/duplicate a document
@@ -390,6 +406,10 @@ function App() {
           };
           img.src = imageUrl;
         }
+      };
+      reader.onerror = () => {
+        console.error("Failed to read image file.");
+        setTool('hand');
       };
       reader.readAsDataURL(file);
 

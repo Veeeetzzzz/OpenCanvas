@@ -32,6 +32,11 @@ interface CanvasProps {
 const DEFAULT_GRID_SIZE = 20; // Define default grid size
 const BACKGROUND_STYLE_COLOR = "#CCCCCC"; // Color for dots/lines/squares
 
+export const getDraggedPosition = (point: Point, dragStart: Point): Point => ({
+  x: point.x - dragStart.x,
+  y: point.y - dragStart.y,
+});
+
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
   {
     tool,
@@ -496,12 +501,18 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
        // Check for text hit first
        const textHit = textHitTest(point);
        if (textHit) {
+         if (!textHit.action.textElement) {
+           return;
+         }
          setSelectedText(textHit.action);
          setSelectedTextIndex(textHit.index);
          setSelectedImage(null);
          setSelectedImageIndex(null);
          setIsDragging(true);
-         setDragStart({ x: point.x - textHit.action.textElement!.position.x, y: point.y - textHit.action.textElement!.position.y });
+         setDragStart({
+           x: point.x - textHit.action.textElement.position.x,
+           y: point.y - textHit.action.textElement.position.y
+         });
          event.preventDefault(); // Prevent default text selection
        } else {
          // Then check for image hit
@@ -594,10 +605,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
 
          } else if (isDragging && dragStart) {
            // --- Image Dragging Logic ---
-           const newPosition = {
-             x: point.x - dragStart.x,
-             y: point.y - dragStart.y,
-           };
+          const newPosition = getDraggedPosition(point, dragStart);
            // Add safety check before updating state
            if (selectedImage.imageElement) {
              try {
@@ -623,16 +631,12 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
          }
       } else if (tool === 'hand' && selectedText && selectedText.textElement && isDragging && dragStart) {
          // --- Text Dragging Logic --- (existing)
-         const newPosition = {
-           x: point.x - dragStart.x,
-           y: point.y - dragStart.y,
-         };
+         const newPosition = getDraggedPosition(point, dragStart);
          // Update selectedText state for visual feedback during drag
          setSelectedText({ 
             ...selectedText, 
             textElement: { ...selectedText.textElement, position: newPosition } 
          });
-         context.restore();
       } else if (currentAction && (tool === 'pencil' || tool === 'eraser')) {
         // Get the last point BEFORE adding the new one
         const lastPoint = currentAction.points[currentAction.points.length - 1];
@@ -668,7 +672,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     setHoveredResizeHandle(currentHoveredHandle);
   };
 
-  const stopDrawing = (_e?: React.MouseEvent) => { 
+  const stopDrawing = () => { 
     // Reset hover state on mouse up/leave
     setHoveredResizeHandle(null); 
 
@@ -731,13 +735,6 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
        setDragStart(null);
        // Keep selectedText and selectedTextIndex
 
-    } else if (isDrawing && currentAction && (tool === 'pencil' || tool === 'eraser')) {
-       // Finalize pencil/eraser action
-       const currentState = history[historyIndex] ?? { actions: [], currentAction: null };
-       const newActions = [...currentState.actions, currentAction];
-       onStateChange({ actions: newActions, currentAction: null });
-       setCurrentAction(null);
-       setIsDrawing(false);
     } else {
        // If simply clicking without dragging (e.g., selecting without moving) or other tools end interaction
        setIsDrawing(false);
