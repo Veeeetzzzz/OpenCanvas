@@ -64,9 +64,6 @@ export function Sidebar({
   onConfirmRename,
   onCancelRename
 }: SidebarProps) {
-  // Log received props on every render
-  console.log("[Sidebar] Rendered. renamingDocId:", renamingDocId);
-  
   const renameInputRef = useRef<HTMLInputElement>(null);
   // Local state for the input value during rename
   const [localRenameValue, setLocalRenameValue] = useState("");

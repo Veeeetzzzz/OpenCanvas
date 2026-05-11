@@ -10,6 +10,14 @@ import {
 } from "@/components/ui/context-menu"
 import { Copy, Trash } from "lucide-react"
 import { BackgroundStyle } from "@/components/settings-dialog"
+import {
+  createActionReplacementState,
+  getBackgroundLineSegments,
+  getDraggedPosition,
+  getPreviewAction,
+  removeActionAtIndex,
+  replaceActionAtIndex,
+} from "@/lib/canvas-helpers"
 
 interface CanvasProps {
   tool: Tool;
@@ -31,11 +39,6 @@ interface CanvasProps {
 
 const DEFAULT_GRID_SIZE = 20; // Define default grid size
 const BACKGROUND_STYLE_COLOR = "#CCCCCC"; // Color for dots/lines/squares
-
-export const getDraggedPosition = (point: Point, dragStart: Point): Point => ({
-  x: point.x - dragStart.x,
-  y: point.y - dragStart.y,
-});
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
   {
@@ -72,7 +75,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
   const [clipboardImage, setClipboardImage] = useState<DrawingAction | null>(null)
   const [selectedText, setSelectedText] = useState<DrawingAction | null>(null)
   const [selectedTextIndex, setSelectedTextIndex] = useState<number | null>(null)
-  const [activeTextInput, setActiveTextInput] = useState<{ position: Point; initialValue: string; width?: number; height?: number } | null>(null)
+  const [activeTextInput, setActiveTextInput] = useState<{ position: Point; initialValue: string; editingIndex?: number; width?: number; height?: number } | null>(null)
   const [hoveredResizeHandle, setHoveredResizeHandle] = useState<string | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const drawGenerationRef = useRef(0)
@@ -105,10 +108,13 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     const isIdenticalToInitial = activeTextInput.initialValue && text === activeTextInput.initialValue;
     let shouldDeactivate = false;
 
-    if (!isTrimmedEmpty) {
-      if (isIdenticalToInitial) {
-        shouldDeactivate = true;
-      } else {
+    if (!isTrimmedEmpty && isIdenticalToInitial) {
+      shouldDeactivate = true;
+    } else {
+      const currentHistoryState = history[historyIndex] ?? { actions: [], currentAction: null };
+      const editingIndex = activeTextInput.editingIndex;
+
+      if (!isTrimmedEmpty) {
         const textElement: TextElement = {
           text,
           position: activeTextInput.position,
@@ -116,19 +122,28 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
           fontSize,
           color
         };
-        const currentHistoryState = history[historyIndex] ?? { actions: [], currentAction: null };
-        const newActions = [...currentHistoryState.actions, {
+        const nextTextAction: DrawingAction = {
           tool: 'text' as Tool,
           points: [],
           color,
           lineWidth: 0,
           textElement
-        }];
+        };
+        const newActions =
+          editingIndex !== undefined
+            ? replaceActionAtIndex(currentHistoryState.actions, editingIndex, nextTextAction)
+            : [...currentHistoryState.actions, nextTextAction];
         onStateChange({ actions: newActions, currentAction: null });
+        setSelectedText(nextTextAction);
+        setSelectedTextIndex(editingIndex ?? newActions.length - 1);
         shouldDeactivate = true;
-      }
-    } else {
-      if (activeTextInput.initialValue !== '') {
+      } else if (editingIndex !== undefined) {
+        const newActions = removeActionAtIndex(currentHistoryState.actions, editingIndex);
+        onStateChange({ actions: newActions, currentAction: null });
+        setSelectedText(null);
+        setSelectedTextIndex(null);
+        shouldDeactivate = true;
+      } else if (activeTextInput.initialValue !== '') {
         shouldDeactivate = true;
       }
     }
@@ -171,22 +186,17 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
         }
       }
     } else if (backgroundStyle === 'squares' || backgroundStyle === 'lines') {
-      // Vertical lines (for squares and lines)
-      for (let x = styleSize; x < canvas.width; x += styleSize) {
+      getBackgroundLineSegments(
+        backgroundStyle,
+        canvas.width,
+        canvas.height,
+        styleSize
+      ).forEach(({ from, to }) => {
         context.beginPath();
-        context.moveTo(x, 0);
-        context.lineTo(x, canvas.height);
+        context.moveTo(from.x, from.y);
+        context.lineTo(to.x, to.y);
         context.stroke();
-      }
-      // Horizontal lines (for squares only)
-      if (backgroundStyle === 'squares') {
-        for (let y = styleSize; y < canvas.height; y += styleSize) {
-          context.beginPath();
-          context.moveTo(0, y);
-          context.lineTo(canvas.width, y);
-          context.stroke();
-        }
-      }
+      });
     }
     context.restore();
 
@@ -216,7 +226,13 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     // 4. Draw History Actions (pencil, text, images)
     const currentState = history[historyIndex];
     if (currentState) {
-      currentState.actions.forEach(action => {
+      currentState.actions.forEach((historyAction, actionIndex) => {
+        const action = getPreviewAction(historyAction, actionIndex, {
+          image: isDragging || isResizing ? selectedImage : null,
+          imageIndex: selectedImageIndex,
+          text: isDragging ? selectedText : null,
+          textIndex: selectedTextIndex,
+        });
         context.save();
         // Pencil/Eraser
         if (action.tool === 'pencil' || action.tool === 'eraser') {
@@ -323,7 +339,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     }
     context.restore();
   // Add dependencies for useCallback
-  }, [context, backgroundColor, backgroundStyle, gridEnabled, history, historyIndex, imageDataCache, tool, selectedText, selectedImage, ref, canvasWidth, canvasHeight]);
+  }, [context, backgroundColor, backgroundStyle, gridEnabled, history, historyIndex, imageDataCache, tool, selectedText, selectedTextIndex, selectedImage, selectedImageIndex, isDragging, isResizing, ref]);
 
   // --- Effects --- 
 
@@ -341,14 +357,16 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
         setContext(ctx);
-        // Initial draw after setting size and context
-        redrawCanvas(); 
       } else {
         setContext(null);
       }
     }
     // Depend on dimensions and ref
-  }, [ref, canvasWidth, canvasHeight, redrawCanvas]); // Add redrawCanvas dependency
+  }, [ref, canvasWidth, canvasHeight]);
+
+  useEffect(() => {
+    redrawCanvas();
+  }, [redrawCanvas]);
 
   // Effect to handle tool changes 
   useEffect(() => {
@@ -578,7 +596,6 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
              newY = point.y;
            }
 
-           // Update both selectedImage and history state
            const updatedImageElement = {
              ...currentImage,
              position: { x: newX, y: newY },
@@ -591,17 +608,6 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
              ...selectedImage,
              imageElement: updatedImageElement
            });
-
-           // Update history state
-           const currentState = history[historyIndex];
-           if (currentState && selectedImageIndex !== null) {
-             const updatedActions = [...currentState.actions];
-             updatedActions[selectedImageIndex] = {
-               ...selectedImage,
-               imageElement: updatedImageElement
-             };
-             onStateChange({ actions: updatedActions, currentAction: null });
-           }
 
          } else if (isDragging && dragStart) {
            // --- Image Dragging Logic ---
@@ -687,15 +693,11 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     } else if (tool === 'hand' && (isDragging || isResizing) && selectedImage !== null && selectedImageIndex !== null) {
       const currentState = history[historyIndex];
       if (currentState && selectedImageIndex >= 0 && selectedImageIndex < currentState.actions.length) {
-        const newAction = selectedImage; // Contains the final position/size from the draw handler
-        const newActions = currentState.actions.map((action, index) => 
-            index === selectedImageIndex ? newAction : action
+        const newState = createActionReplacementState(
+          currentState,
+          selectedImageIndex,
+          selectedImage
         );
-        const newState: DrawingState = {
-          actions: newActions,
-          currentAction: null
-        };
-        console.log("Finalizing image drag/resize. New state:", JSON.stringify(newState)); // Log state before update
         try {
           onStateChange(newState);
         } catch (error) {
@@ -716,15 +718,11 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
        // Finalize Text Dragging
        const currentState = history[historyIndex];
        if (currentState && selectedTextIndex >= 0 && selectedTextIndex < currentState.actions.length) {
-         const finalMovedTextAction = selectedText; // Contains the final position from the draw handler state
-         const newActions = currentState.actions.map((action, index) => 
-             index === selectedTextIndex ? finalMovedTextAction : action
+         const newState = createActionReplacementState(
+           currentState,
+           selectedTextIndex,
+           selectedText
          );
-         // Create a new state object for the history
-         const newState: DrawingState = {
-           actions: newActions,
-           currentAction: null
-         };
          onStateChange(newState);
        } else {
          console.error("Could not find selected text index in history on stopDrawing");
@@ -892,9 +890,11 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
         setActiveTextInput({ 
             position: textHit.action.textElement.position, 
             initialValue: textHit.action.textElement.text,
+            editingIndex: textHit.index,
             // Optional: Consider setting width/height if needed for input sizing
         });
         setSelectedText(textHit.action); // Keep it selected visually
+       setSelectedTextIndex(textHit.index);
        setSelectedImage(null);
        setSelectedImageIndex(null);
         // Remove the action being edited from the *current* state to prevent redraw overlap

@@ -5,7 +5,7 @@ import { Canvas } from '@/components/canvas';
 import { Toolbar } from '@/components/toolbar';
 import { Sidebar } from '@/components/sidebar';
 import { cn } from '@/lib/utils';
-import { Tool, DrawingState, ImageElement, DrawingAction, CollaborationEvent } from '@/lib/types';
+import { Tool, DrawingState, ImageElement, DrawingAction, CollaborationEvent, OpenCanvasDocument } from '@/lib/types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { SettingsDialog, AppSettings } from "@/components/settings-dialog";
 import { FileDown, HelpCircle, ChevronUp, ChevronDown, Share2 } from "lucide-react";
@@ -16,14 +16,36 @@ import { HelpDialog } from "@/components/help-dialog";
 import { Toaster } from "@/components/ui/toaster";
 import { Settings } from "lucide-react";
 import { collaborationService } from '@/lib/collaboration';
-import { resolveDeleteDocumentState } from '@/lib/document-state';
+import {
+  loadDocumentStorage,
+  resolveDeleteDocumentState,
+  resolveRedoIndex,
+  resolveUndoIndex,
+  saveDocumentStorage,
+} from '@/lib/document-state';
+import {
+  collectImageIdsFromDocuments,
+  loadImageAssets,
+  saveImageAsset,
+} from '@/lib/image-assets';
 
-// Define the structure for a single document
-interface Document {
-  id: string;
-  name: string;
-  history: DrawingState[];
-  historyIndex: number;
+type StateChangeOptions = {
+  broadcast?: boolean;
+};
+
+function isDrawingEventData(
+  value: unknown
+): value is { update: DrawingState | DrawingAction; imageData?: string } {
+  if (!value || typeof value !== 'object' || !('update' in value)) {
+    return false;
+  }
+  const candidate = value as { update?: unknown; imageData?: unknown };
+  return (
+    typeof candidate.update === 'object' &&
+    candidate.update !== null &&
+    ('actions' in candidate.update || 'tool' in candidate.update) &&
+    (candidate.imageData === undefined || typeof candidate.imageData === 'string')
+  );
 }
 
 function App() {
@@ -32,7 +54,7 @@ function App() {
   const [pencilWidth, setPencilWidth] = useState(5);
   const [eraserWidth, setEraserWidth] = useState(20);
   // State to hold all documents
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const [documents, setDocuments] = useState<OpenCanvasDocument[]>([]);
   // State to track the ID of the currently active document
   const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
   // State for image data cache (maps imageId to data URL)
@@ -56,24 +78,6 @@ function App() {
   // --- Rename State ---
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const currentDocumentIdRef = useRef<string | null>(null);
-  const isMountedRef = useRef(true);
-  const safeSessionGet = (key: string) => {
-    try {
-      return sessionStorage.getItem(key);
-    } catch (error) {
-      console.error("Failed to read sessionStorage:", error);
-      return null;
-    }
-  };
-
-  const safeSessionSet = (key: string, value: string) => {
-    try {
-      sessionStorage.setItem(key, value);
-    } catch (error) {
-      console.error("Failed to write sessionStorage:", error);
-    }
-  };
-
   // Find the current document based on the ID
   const currentDocument = documents.find(doc => doc.id === currentDocumentId);
   // Derive current history and index from the current document
@@ -84,36 +88,21 @@ function App() {
     currentDocumentIdRef.current = currentDocumentId;
   }, [currentDocumentId]);
 
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  // Effect to load documents from sessionStorage on mount and handle shared links
+  // Effect to load documents from localStorage on mount and handle shared links
   useEffect(() => {
     // Check URL parameters for shared session
     const urlParams = new URLSearchParams(window.location.search);
     const shareId = urlParams.get('share');
-    const sharedDocId = urlParams.get('doc');
     let isActive = true;
 
     const initializeSession = async () => {
-      if (shareId && sharedDocId) {
+      if (shareId) {
         // This is a shared link - join the collaboration session
-        const success = await collaborationService.joinSharedSession(shareId);
+        const sharedDoc = await collaborationService.joinSharedSession(shareId);
         if (!isActive) return;
-        if (success) {
-          // Create or load the shared document
-          const sharedDoc: Document = {
-            id: sharedDocId,
-            name: 'Shared Document',
-            history: [],
-            historyIndex: -1,
-          };
+        if (sharedDoc) {
           setDocuments([sharedDoc]);
-          setCurrentDocumentId(sharedDocId);
-          console.log('Joined shared session successfully');
+          setCurrentDocumentId(sharedDoc.id);
         } else {
           console.error('Failed to join shared session');
           // Fall back to normal loading
@@ -129,33 +118,23 @@ function App() {
 
     function loadNormalSession() {
       if (!isActive) return;
-      const savedDocs = safeSessionGet('openCanvasDocuments');
-      const savedCurrentId = safeSessionGet('openCanvasCurrentId');
-      if (savedDocs) {
-        try {
-          const parsedDocs: Document[] = JSON.parse(savedDocs);
-          if (Array.isArray(parsedDocs) && parsedDocs.length > 0) {
-            if (!isActive) return;
-            setDocuments(parsedDocs);
-            // Restore the last active document ID, or default to the first one
-            setCurrentDocumentId(savedCurrentId ?? parsedDocs[0]?.id ?? null);
-            return; // Exit early if loaded successfully
-          }
-        } catch (error) {
-          console.error("Failed to parse documents from sessionStorage:", error);
-          try {
-            // Clear potentially corrupted data
-            sessionStorage.removeItem('openCanvasDocuments');
-            sessionStorage.removeItem('openCanvasCurrentId');
-          } catch (removeError) {
-            console.error("Failed to clear sessionStorage:", removeError);
-          }
+      try {
+        const savedState = loadDocumentStorage<OpenCanvasDocument>(
+          localStorage,
+          sessionStorage
+        );
+        if (savedState.documents && savedState.documents.length > 0) {
+          setDocuments(savedState.documents);
+          setCurrentDocumentId(savedState.currentDocumentId);
+          return;
         }
+      } catch (error) {
+        console.error("Failed to read document storage:", error);
       }
       // If no saved data or parsing failed, initialize with one new document
       if (!isActive) return;
       const newDocId = `doc_${Date.now()}`;
-      const newDocument: Document = {
+      const newDocument: OpenCanvasDocument = {
         id: newDocId,
         name: "Document 1",
         history: [],
@@ -172,16 +151,44 @@ function App() {
     };
   }, []); // Empty dependency array ensures this runs only once on mount
 
-  // Effect to save documents and current ID to sessionStorage whenever they change
+  // Effect to save documents and current ID to localStorage whenever they change
   useEffect(() => {
-    if (documents.length > 0 && currentDocumentId) {
-        safeSessionSet('openCanvasDocuments', JSON.stringify(documents));
-        safeSessionSet('openCanvasCurrentId', currentDocumentId);
+    try {
+      saveDocumentStorage(localStorage, documents, currentDocumentId);
+    } catch (error) {
+      console.error("Failed to write document storage:", error);
     }
   }, [documents, currentDocumentId]);
 
+  useEffect(() => {
+    const missingImageIds = collectImageIdsFromDocuments(documents).filter(
+      (imageId) => !imageDataCache[imageId]
+    );
+    if (missingImageIds.length === 0) return;
+
+    let isActive = true;
+    loadImageAssets(missingImageIds).then((assets) => {
+      if (!isActive || Object.keys(assets).length === 0) return;
+      setImageDataCache((prevCache) => ({ ...prevCache, ...assets }));
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [documents, imageDataCache]);
+
+  useEffect(() => {
+    if (currentDocument && collaborationService.isInSharedSession()) {
+      collaborationService.updateSharedDocumentSnapshot(currentDocument);
+    }
+  }, [currentDocument]);
+
   // Update state change handler to optionally accept image data for caching
-  const handleStateChange = useCallback((update: DrawingState | DrawingAction, pastedImageDataUrl?: string) => {
+  const handleStateChange = useCallback((
+    update: DrawingState | DrawingAction,
+    pastedImageDataUrl?: string,
+    options: StateChangeOptions = {}
+  ) => {
     const activeDocumentId = currentDocumentIdRef.current;
     if (!activeDocumentId) return;
 
@@ -189,6 +196,7 @@ function App() {
     if (pastedImageDataUrl && !('actions' in update) && update.imageElement) {
       const newImageId = update.imageElement.imageId;
       setImageDataCache(prevCache => ({ ...prevCache, [newImageId]: pastedImageDataUrl }));
+      void saveImageAsset(newImageId, pastedImageDataUrl);
     }
 
     // Now update the documents state (history)
@@ -227,7 +235,7 @@ function App() {
     });
 
     // Broadcast to collaborators if in a shared session
-    if (collaborationService.isInSharedSession()) {
+    if (options.broadcast !== false && collaborationService.isInSharedSession()) {
       collaborationService.broadcastEvent({
         type: 'drawing',
         data: { update, imageData: pastedImageDataUrl }
@@ -243,13 +251,12 @@ function App() {
       }
 
       const data = event.data;
-      if (!data || typeof data !== 'object' || !('update' in data)) {
+      if (!isDrawingEventData(data)) {
         console.warn('Received malformed drawing event:', event);
         return;
       }
 
-      const imageData = typeof data.imageData === 'string' ? data.imageData : undefined;
-      handleStateChange(data.update as DrawingState | DrawingAction, imageData);
+      handleStateChange(data.update, data.imageData, { broadcast: false });
     };
 
     const unsubscribe = collaborationService.onEvent(handleCollaborationEvent);
@@ -260,30 +267,76 @@ function App() {
   }, [handleStateChange]);
 
   // Update undo handler
-  const handleUndo = () => {
-    if (!currentDocumentId || currentHistoryIndex <= 0) return;
+  const handleUndo = useCallback(() => {
+    if (!currentDocumentId || currentHistoryIndex < 0) return;
 
     setDocuments(docs =>
       docs.map(doc =>
         doc.id === currentDocumentId
-          ? { ...doc, historyIndex: currentHistoryIndex - 1 }
+          ? { ...doc, historyIndex: resolveUndoIndex(currentHistoryIndex) }
           : doc
       )
     );
-  };
+  }, [currentDocumentId, currentHistoryIndex]);
 
   // Update redo handler
-  const handleRedo = () => {
+  const handleRedo = useCallback(() => {
     if (!currentDocumentId || currentHistoryIndex >= currentHistory.length - 1) return;
 
     setDocuments(docs =>
       docs.map(doc =>
         doc.id === currentDocumentId
-          ? { ...doc, historyIndex: currentHistoryIndex + 1 }
+          ? { ...doc, historyIndex: resolveRedoIndex(currentHistory.length, currentHistoryIndex) }
           : doc
       )
     );
-  };
+  }, [currentDocumentId, currentHistory.length, currentHistoryIndex]);
+
+  useEffect(() => {
+    const shouldIgnoreShortcut = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      return (
+        target.isContentEditable ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      );
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreShortcut(event.target)) return;
+
+      const key = event.key.toLowerCase();
+      const hasShortcutModifier = event.ctrlKey || event.metaKey;
+
+      if (hasShortcutModifier && key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+        return;
+      }
+
+      if (hasShortcutModifier && key === 'y') {
+        event.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      if (hasShortcutModifier || event.altKey || event.shiftKey) return;
+
+      if (key === 'v') setTool('hand');
+      if (key === 'p') setTool('pencil');
+      if (key === 'e') setTool('eraser');
+      if (key === 't') setTool('text');
+      if (key === 'i') setTool('image');
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleRedo, handleUndo]);
 
   // Function to switch the active document
   const handleSwitchDocument = (docId: string) => {
@@ -295,7 +348,7 @@ function App() {
     const newDocId = `doc_${Date.now()}`; // Simple unique ID
     // Determine a simple name for the new document
     const newDocName = `Document ${documents.length + 1}`;
-    const newDocument: Document = {
+    const newDocument: OpenCanvasDocument = {
       id: newDocId,
       name: newDocName,
       history: [],
@@ -326,7 +379,7 @@ function App() {
     const copiedHistory = JSON.parse(JSON.stringify(docToCopy.history));
 
     // Create the new document structure
-    const newDocument: Document = {
+    const newDocument: OpenCanvasDocument = {
       ...docToCopy, // Copy historyIndex
       id: newDocId,
       name: newDocName,
@@ -397,7 +450,7 @@ function App() {
               imageElement: imageElement,
             };
             
-            handleStateChange(imageAction);
+            handleStateChange(imageAction, imageUrl);
             setTool('hand');
           };
           img.onerror = () => {
@@ -626,7 +679,7 @@ function App() {
                   onEraserWidthChange={setEraserWidth}
                   onUndo={handleUndo}
                   onRedo={handleRedo}
-                  canUndo={currentHistoryIndex > 0}
+                  canUndo={currentHistoryIndex >= 0}
                   canRedo={currentHistoryIndex < currentHistory.length - 1}
                   showTooltips={settings.showTooltips}
                 />
@@ -684,8 +737,7 @@ function App() {
         <ShareDialog
           isOpen={isShareDialogOpen}
           onOpenChange={setIsShareDialogOpen}
-          documentId={currentDocument.id}
-          documentName={currentDocument.name}
+          document={currentDocument}
         />
       )}
       <Toaster />

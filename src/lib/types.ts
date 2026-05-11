@@ -34,6 +34,13 @@ export type DrawingState = {
   currentAction: DrawingAction | null;
 }
 
+export type OpenCanvasDocument = {
+  id: string;
+  name: string;
+  history: DrawingState[];
+  historyIndex: number;
+};
+
 // New types for collaboration
 export type CollaborationUser = {
   id: string;
@@ -53,8 +60,9 @@ export type SharedDocument = {
 };
 
 export type CollaborationEvent = {
+  id: string;
   type: 'drawing' | 'cursor' | 'document_update' | 'user_join' | 'user_leave';
   userId: string;
-  data: any;
+  data: unknown;
   timestamp: number;
 };

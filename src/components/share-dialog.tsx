@@ -6,17 +6,16 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Copy, Users, Link2, UserPlus } from 'lucide-react';
 import { collaborationService } from '@/lib/collaboration';
-import { CollaborationUser } from '@/lib/types';
+import { CollaborationUser, OpenCanvasDocument } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 
 interface ShareDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  documentId: string;
-  documentName: string;
+  document: OpenCanvasDocument;
 }
 
-export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: ShareDialogProps) {
+export function ShareDialog({ isOpen, onOpenChange, document }: ShareDialogProps) {
   const [shareLink, setShareLink] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [connectedUsers, setConnectedUsers] = useState<CollaborationUser[]>([]);
@@ -26,6 +25,7 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
   const currentUser = collaborationService.getCurrentUser();
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
@@ -49,13 +49,13 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
   const handleGenerateLink = () => {
     setIsGenerating(true);
     try {
-      const link = collaborationService.generateShareLink(documentId);
+      const link = collaborationService.generateShareLink(document);
       if (!isMountedRef.current) return;
       setShareLink(link);
 
       toast({
         title: "Share link generated!",
-        description: "Anyone with this link can collaborate on your document.",
+        description: "Open it in another normal tab in this browser profile.",
       });
     } catch {
       toast({
@@ -111,10 +111,10 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Link2 className="h-5 w-5" />
-            Share "{documentName}"
+            Share "{document.name}"
           </DialogTitle>
           <DialogDescription>
-            Create a secret link to collaborate with others in real-time.
+            Create a local link for another tab in this browser profile.
           </DialogDescription>
         </DialogHeader>
 
@@ -122,7 +122,7 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
           {!isSharing ? (
             <div className="space-y-4">
               <div className="text-sm text-muted-foreground">
-                Generate a unique link that others can use to collaborate on this document in real-time.
+                Generate a link for another tab in this same browser profile. No server is used, so links are not cross-device.
               </div>
               <Button 
                 onClick={handleGenerateLink} 
@@ -149,7 +149,7 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
                   </Button>
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  Anyone with this link can view and edit the document
+                  Works in normal tabs in this same browser profile
                 </div>
               </div>
 
@@ -185,7 +185,7 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
                       <UserPlus className="h-8 w-8 mx-auto mb-2 opacity-50" />
                       No one else has joined yet.
                       <br />
-                      Share the link to start collaborating!
+                      Share the link with another local tab to start collaborating!
                     </div>
                   )}
                 </div>
@@ -204,4 +204,4 @@ export function ShareDialog({ isOpen, onOpenChange, documentId, documentName }: 
       </DialogContent>
     </Dialog>
   );
-} 
+}

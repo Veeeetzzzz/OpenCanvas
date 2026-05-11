@@ -1,14 +1,30 @@
-import { CollaborationEvent, CollaborationUser } from './types';
+import { isOpenCanvasDocumentLike } from './document-state';
+import { CollaborationEvent, CollaborationUser, OpenCanvasDocument } from './types';
 
-// Cross-browser collaboration using WebSocket and localStorage fallback
-// Works across different browser contexts including private/incognito tabs
+const VALID_COLLABORATION_TYPES = new Set([
+  'drawing',
+  'cursor',
+  'document_update',
+  'user_join',
+  'user_leave',
+]);
 
-const VALID_COLLABORATION_TYPES = new Set(['drawing', 'cursor', 'document_update', 'user_join', 'user_leave']);
+type SharedSessionInfo = {
+  documentId: string;
+  shareId: string;
+  hostId: string;
+  createdAt: number;
+  lastActive: number;
+  document: OpenCanvasDocument;
+};
 
-export function isCollaborationEventPayload(value: unknown): value is CollaborationEvent {
+export function isCollaborationEventPayload(
+  value: unknown
+): value is CollaborationEvent {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<CollaborationEvent>;
   return (
+    typeof candidate.id === 'string' &&
     typeof candidate.userId === 'string' &&
     typeof candidate.timestamp === 'number' &&
     typeof candidate.type === 'string' &&
@@ -16,7 +32,42 @@ export function isCollaborationEventPayload(value: unknown): value is Collaborat
   );
 }
 
-class CollaborationService {
+function isCollaborationUser(value: unknown): value is CollaborationUser {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<CollaborationUser>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.color === 'string'
+  );
+}
+
+export function createProcessedEventTracker(limit = 500) {
+  const seenIds = new Set<string>();
+  const orderedIds: string[] = [];
+
+  return {
+    remember(eventId: string): boolean {
+      if (seenIds.has(eventId)) {
+        return false;
+      }
+
+      seenIds.add(eventId);
+      orderedIds.push(eventId);
+
+      while (orderedIds.length > limit) {
+        const staleId = orderedIds.shift();
+        if (staleId) {
+          seenIds.delete(staleId);
+        }
+      }
+
+      return true;
+    },
+  };
+}
+
+export class CollaborationService {
   private shareId: string | null = null;
   private currentUser: CollaborationUser | null = null;
   private connectedUsers: Map<string, CollaborationUser> = new Map();
@@ -29,203 +80,236 @@ class CollaborationService {
   private broadcastListener: ((event: MessageEvent) => void) | null = null;
   private communicationReady = false;
   private activeShareId: string | null = null;
-  
-  // Simple coordination using a shared storage approach
+  private processedEvents = createProcessedEventTracker();
+
   private readonly STORAGE_KEY_PREFIX = 'opencanvas_collab_';
 
-  // Generate a shareable link for the current document
-  generateShareLink(documentId: string): string {
+  generateShareLink(document: OpenCanvasDocument): string {
     const shareId = this.generateShareId();
     this.shareId = shareId;
-    
-    // Initialize current user as host
+    this.processedEvents = createProcessedEventTracker();
+
     this.currentUser = {
       id: this.generateUserId(),
       name: 'Host',
-      color: this.generateRandomColor()
+      color: this.generateRandomColor(),
     };
 
-    // Store the shared document info for coordination
-    const sharedDocInfo = {
-      documentId,
+    this.writeSharedSessionInfo({
+      documentId: document.id,
       shareId,
       hostId: this.currentUser.id,
       createdAt: Date.now(),
-      lastActive: Date.now()
-    };
-    
-    try {
-      // Use sessionStorage for temporary sharing
-      sessionStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sharedDocInfo));
-      
-      // Also store in localStorage as backup for cross-tab communication
-      localStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sharedDocInfo));
-    } catch (error) {
-      console.error('Failed to store shared session info:', error);
-    }
+      lastActive: Date.now(),
+      document,
+    });
 
-    // Set up communication channels
     this.setupCommunication();
 
     const baseUrl = window.location.origin + window.location.pathname;
-    return `${baseUrl}?share=${shareId}&doc=${documentId}`;
+    return `${baseUrl}?share=${shareId}&doc=${document.id}`;
   }
 
-  // Join a shared session from a link
-  async joinSharedSession(shareId: string, userName?: string): Promise<boolean> {
+  async joinSharedSession(
+    shareId: string,
+    userName?: string
+  ): Promise<OpenCanvasDocument | null> {
     if (!this.isValidShareId(shareId)) {
       console.error('Invalid share ID format:', shareId);
-      return false;
+      return null;
+    }
+
+    const sessionInfo = this.readSharedSessionInfo(shareId);
+    if (!sessionInfo) {
+      console.error('Shared session not found or malformed:', shareId);
+      return null;
     }
 
     this.shareId = shareId;
-    
+    this.processedEvents = createProcessedEventTracker();
     this.currentUser = {
       id: this.generateUserId(),
       name: userName || 'Guest',
-      color: this.generateRandomColor()
+      color: this.generateRandomColor(),
     };
 
-    try {
-      // Check if shared session exists
-      const hostInfo = localStorage.getItem(`${this.STORAGE_KEY_PREFIX}${shareId}`) || 
-                     sessionStorage.getItem(`${this.STORAGE_KEY_PREFIX}${shareId}`);
-      
-      if (!hostInfo) {
-        throw new Error('Shared session not found');
-      }
+    this.writeSharedSessionInfo({
+      ...sessionInfo,
+      lastActive: Date.now(),
+    });
 
-      const sessionInfo = this.safeParse(hostInfo);
-      if (!sessionInfo || typeof sessionInfo !== 'object') {
-        throw new Error('Shared session data is malformed');
-      }
-      
-      // Update last active time
-      (sessionInfo as Record<string, unknown>).lastActive = Date.now();
-      localStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sessionInfo));
-      sessionStorage.setItem(`${this.STORAGE_KEY_PREFIX}${shareId}`, JSON.stringify(sessionInfo));
+    this.setupCommunication();
 
-      // Set up communication
-      this.setupCommunication();
-      
-      return true;
-    } catch (error) {
-      console.error('Failed to join session:', error);
-      return false;
-    }
+    return sessionInfo.document;
   }
 
-  // Send a collaboration event to all connected peers
-  broadcastEvent(event: Omit<CollaborationEvent, 'userId' | 'timestamp'>) {
+  updateSharedDocumentSnapshot(document: OpenCanvasDocument) {
+    if (!this.shareId) return;
+
+    const sessionInfo = this.readSharedSessionInfo(this.shareId);
+    if (!sessionInfo) return;
+
+    this.writeSharedSessionInfo({
+      ...sessionInfo,
+      documentId: document.id,
+      document,
+      lastActive: Date.now(),
+    });
+  }
+
+  broadcastEvent(event: Omit<CollaborationEvent, 'id' | 'userId' | 'timestamp'>) {
     if (!this.currentUser || !this.shareId) return;
 
     const fullEvent: CollaborationEvent = {
       ...event,
+      id: this.generateEventId(),
       userId: this.currentUser.id,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
-    // Store event in shared storage for cross-tab communication
-    const eventKey = `${this.STORAGE_KEY_PREFIX}event_${this.shareId}_${Date.now()}_${Math.random()}`;
+    this.processedEvents.remember(fullEvent.id);
+
+    const eventKey = `${this.STORAGE_KEY_PREFIX}event_${this.shareId}_${fullEvent.timestamp}_${fullEvent.id}`;
     const eventData = {
       event: fullEvent,
       shareId: this.shareId,
-      timestamp: Date.now()
+      timestamp: fullEvent.timestamp,
     };
 
     try {
       localStorage.setItem(eventKey, JSON.stringify(eventData));
-      
-      // Clean up old events (keep only last 10)
       this.cleanupOldEvents();
-      
-      // Also try BroadcastChannel for same-origin tabs
-      if (this.broadcastChannel) {
-        this.broadcastChannel.postMessage(fullEvent);
-      }
+      this.broadcastChannel?.postMessage(fullEvent);
     } catch (error) {
       console.error('Failed to broadcast event:', error);
     }
   }
 
-  // Subscribe to collaboration events
   onEvent(callback: (event: CollaborationEvent) => void) {
     this.onEventCallbacks.push(callback);
     return () => {
-      this.onEventCallbacks = this.onEventCallbacks.filter(existing => existing !== callback);
+      this.onEventCallbacks = this.onEventCallbacks.filter(
+        (existing) => existing !== callback
+      );
     };
   }
 
-  // Subscribe to user list changes
   onUsersChange(callback: (users: CollaborationUser[]) => void) {
     this.onUsersChangeCallbacks.push(callback);
     return () => {
-      this.onUsersChangeCallbacks = this.onUsersChangeCallbacks.filter(existing => existing !== callback);
+      this.onUsersChangeCallbacks = this.onUsersChangeCallbacks.filter(
+        (existing) => existing !== callback
+      );
     };
   }
 
-  // Get current user info
   getCurrentUser(): CollaborationUser | null {
     return this.currentUser;
   }
 
-  // Get list of all connected users
   getConnectedUsers(): CollaborationUser[] {
     return Array.from(this.connectedUsers.values());
   }
 
-  // Disconnect from collaboration session
   disconnect() {
-    // Announce we're leaving
     if (this.currentUser) {
       this.broadcastEvent({
         type: 'user_leave',
-        data: this.currentUser
+        data: this.currentUser,
       });
     }
 
     this.teardownCommunication();
 
-    // Close websocket if connected
     if (this.websocket) {
       this.websocket.close();
       this.websocket = null;
     }
-    
-    // Clear all data
+
     this.connectedUsers.clear();
     this.shareId = null;
     this.currentUser = null;
     this.activeShareId = null;
     this.communicationReady = false;
+    this.processedEvents = createProcessedEventTracker();
   }
 
-  // Check if currently in a shared session
   isInSharedSession(): boolean {
     return this.shareId !== null;
   }
 
-  // Private helper methods
+  private writeSharedSessionInfo(sessionInfo: SharedSessionInfo) {
+    try {
+      const serialized = JSON.stringify(sessionInfo);
+      localStorage.setItem(
+        `${this.STORAGE_KEY_PREFIX}${sessionInfo.shareId}`,
+        serialized
+      );
+      sessionStorage.setItem(
+        `${this.STORAGE_KEY_PREFIX}${sessionInfo.shareId}`,
+        serialized
+      );
+    } catch (error) {
+      console.error('Failed to store shared session info:', error);
+    }
+  }
+
+  private readSharedSessionInfo(shareId: string): SharedSessionInfo | null {
+    try {
+      const raw =
+        localStorage.getItem(`${this.STORAGE_KEY_PREFIX}${shareId}`) ||
+        sessionStorage.getItem(`${this.STORAGE_KEY_PREFIX}${shareId}`);
+      const parsed = raw ? this.safeParse(raw) : null;
+      if (!parsed || typeof parsed !== 'object') return null;
+
+      const candidate = parsed as Partial<SharedSessionInfo>;
+      if (
+        typeof candidate.documentId !== 'string' ||
+        typeof candidate.shareId !== 'string' ||
+        typeof candidate.hostId !== 'string' ||
+        typeof candidate.createdAt !== 'number' ||
+        typeof candidate.lastActive !== 'number' ||
+        !isOpenCanvasDocumentLike(candidate.document)
+      ) {
+        return null;
+      }
+
+      return candidate as SharedSessionInfo;
+    } catch {
+      return null;
+    }
+  }
+
   private generateShareId(): string {
-    // Use crypto.getRandomValues for cryptographic security
-    const array = new Uint8Array(12); // 96 bits of entropy
+    const array = new Uint8Array(12);
     crypto.getRandomValues(array);
-    
-    // Convert to base36 for URL-safe characters
+
     const randomPart = Array.from(array)
-      .map(b => b.toString(36).padStart(2, '0'))
+      .map((byte) => byte.toString(36).padStart(2, '0'))
       .join('')
-      .substr(0, 16); // Take first 16 chars for consistency
-      
+      .slice(0, 16);
+
     return 'share_' + randomPart;
   }
 
+  private generateEventId(): string {
+    return `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  }
+
   private generateUserId(): string {
-    return 'user_' + Math.random().toString(36).substr(2, 9);
+    return 'user_' + Math.random().toString(36).slice(2, 11);
   }
 
   private generateRandomColor(): string {
-    const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+    const colors = [
+      '#FF6B6B',
+      '#4ECDC4',
+      '#45B7D1',
+      '#96CEB4',
+      '#FFEAA7',
+      '#DDA0DD',
+      '#98D8C8',
+    ];
     return colors[Math.floor(Math.random() * colors.length)];
   }
 
@@ -239,17 +323,13 @@ class CollaborationService {
     this.activeShareId = this.shareId;
     this.communicationReady = true;
 
-    // Set up BroadcastChannel for same-origin communication
     this.setupBroadcastChannel();
-    
-    // Set up storage event listener for cross-tab communication
     this.setupStorageListener();
-    
-    // Announce our presence
+
     if (this.currentUser) {
       this.broadcastEvent({
         type: 'user_join',
-        data: this.currentUser
+        data: this.currentUser,
       });
     }
   }
@@ -260,19 +340,21 @@ class CollaborationService {
     try {
       if (this.broadcastChannel) {
         if (this.broadcastListener) {
-          this.broadcastChannel.removeEventListener('message', this.broadcastListener);
+          this.broadcastChannel.removeEventListener(
+            'message',
+            this.broadcastListener
+          );
           this.broadcastListener = null;
         }
         this.broadcastChannel.close();
         this.broadcastChannel = null;
       }
       this.broadcastChannel = new BroadcastChannel(`opencanvas_${this.shareId}`);
-      
+
       this.broadcastListener = (event: MessageEvent) => {
-        if (!this.isCollaborationEvent(event.data)) {
-          return;
+        if (this.isCollaborationEvent(event.data)) {
+          this.handleCollaborationEvent(event.data);
         }
-        this.handleCollaborationEvent(event.data);
       };
       this.broadcastChannel.addEventListener('message', this.broadcastListener);
     } catch (error) {
@@ -283,26 +365,24 @@ class CollaborationService {
   private setupStorageListener() {
     if (this.storageListener) return;
 
-    // Listen for storage events (works across tabs)
     this.storageListener = (event) => {
-      if (!event.key || !event.key.startsWith(`${this.STORAGE_KEY_PREFIX}event_`)) return;
+      if (!event.key || !event.key.startsWith(`${this.STORAGE_KEY_PREFIX}event_`)) {
+        return;
+      }
       if (!event.newValue) return;
-      
-      try {
-        const eventData = this.safeParse(event.newValue);
-        if (!eventData || typeof eventData !== 'object') return;
-        const parsedEventData = eventData as { shareId?: unknown; event?: unknown };
-        if (parsedEventData.shareId === this.shareId && this.isCollaborationEvent(parsedEventData.event)) {
-          this.handleCollaborationEvent(parsedEventData.event);
-        }
-      } catch (error) {
-        console.error('Error parsing storage event:', error);
+
+      const eventData = this.safeParse(event.newValue);
+      if (!eventData || typeof eventData !== 'object') return;
+      const parsedEventData = eventData as { shareId?: unknown; event?: unknown };
+      if (
+        parsedEventData.shareId === this.shareId &&
+        this.isCollaborationEvent(parsedEventData.event)
+      ) {
+        this.handleCollaborationEvent(parsedEventData.event);
       }
     };
 
     window.addEventListener('storage', this.storageListener);
-
-    // Also poll for events in case storage events don't fire
     this.pollIntervalId = window.setInterval(() => {
       this.pollForEvents();
     }, 1000);
@@ -312,28 +392,26 @@ class CollaborationService {
     if (!this.shareId) return;
 
     try {
-      // Get all localStorage keys that match our event pattern
-      const eventKeys = Object.keys(localStorage).filter(key => 
+      const eventKeys = Object.keys(localStorage).filter((key) =>
         key.startsWith(`${this.STORAGE_KEY_PREFIX}event_${this.shareId}_`)
       );
-
-      // Process recent events (last 10 seconds)
       const now = Date.now();
-      eventKeys.forEach(key => {
-        try {
-          const raw = localStorage.getItem(key);
-          const eventData = raw ? this.safeParse(raw) : null;
-          if (!eventData || typeof eventData !== 'object') return;
-          const parsedEventData = eventData as { timestamp?: unknown; event?: unknown };
-          if (
-            typeof parsedEventData.timestamp === 'number' &&
-            parsedEventData.timestamp > now - 10000 &&
-            this.isCollaborationEvent(parsedEventData.event)
-          ) { // Last 10 seconds
-            this.handleCollaborationEvent(parsedEventData.event);
-          }
-        } catch {
-          // Ignore parsing errors for individual events
+
+      eventKeys.forEach((key) => {
+        const raw = localStorage.getItem(key);
+        const eventData = raw ? this.safeParse(raw) : null;
+        if (!eventData || typeof eventData !== 'object') return;
+
+        const parsedEventData = eventData as {
+          timestamp?: unknown;
+          event?: unknown;
+        };
+        if (
+          typeof parsedEventData.timestamp === 'number' &&
+          parsedEventData.timestamp > now - 10000 &&
+          this.isCollaborationEvent(parsedEventData.event)
+        ) {
+          this.handleCollaborationEvent(parsedEventData.event);
         }
       });
     } catch (error) {
@@ -345,27 +423,27 @@ class CollaborationService {
     if (!this.shareId) return;
 
     try {
-      const eventKeys = Object.keys(localStorage).filter(key => 
+      const eventKeys = Object.keys(localStorage).filter((key) =>
         key.startsWith(`${this.STORAGE_KEY_PREFIX}event_${this.shareId}_`)
       );
 
-      // Sort by timestamp and keep only the latest 10
       const sortedKeys = eventKeys
-        .map(key => {
-          try {
-            const raw = localStorage.getItem(key);
-            const parsed = raw ? JSON.parse(raw) : null;
-            const timestamp = typeof parsed?.timestamp === 'number' ? parsed.timestamp : 0;
-            return { key, timestamp };
-          } catch {
-            return { key, timestamp: 0 };
-          }
+        .map((key) => {
+          const raw = localStorage.getItem(key);
+          const parsed = raw ? this.safeParse(raw) : null;
+          const timestamp =
+            parsed &&
+            typeof parsed === 'object' &&
+            'timestamp' in parsed &&
+            typeof parsed.timestamp === 'number'
+              ? parsed.timestamp
+              : 0;
+          return { key, timestamp };
         })
         .sort((a, b) => b.timestamp - a.timestamp)
-        .map(entry => entry.key);
+        .map((entry) => entry.key);
 
-      // Remove old events (keep only last 10)
-      sortedKeys.slice(10).forEach(key => {
+      sortedKeys.slice(100).forEach((key) => {
         localStorage.removeItem(key);
       });
     } catch (error) {
@@ -386,7 +464,10 @@ class CollaborationService {
 
     if (this.broadcastChannel) {
       if (this.broadcastListener) {
-        this.broadcastChannel.removeEventListener('message', this.broadcastListener);
+        this.broadcastChannel.removeEventListener(
+          'message',
+          this.broadcastListener
+        );
         this.broadcastListener = null;
       }
       this.broadcastChannel.close();
@@ -395,27 +476,26 @@ class CollaborationService {
   }
 
   private handleCollaborationEvent(collaborationEvent: CollaborationEvent) {
-    if (!this.isCollaborationEvent(collaborationEvent)) {
-      return;
-    }
-    // Don't process events from ourselves
+    if (!this.isCollaborationEvent(collaborationEvent)) return;
+    if (!this.processedEvents.remember(collaborationEvent.id)) return;
     if (collaborationEvent.userId === this.currentUser?.id) return;
-    
-    // Handle different event types
-    if (collaborationEvent.type === 'user_join') {
+
+    if (
+      collaborationEvent.type === 'user_join' &&
+      isCollaborationUser(collaborationEvent.data)
+    ) {
       this.connectedUsers.set(collaborationEvent.userId, collaborationEvent.data);
       this.triggerUsersChange();
     } else if (collaborationEvent.type === 'user_leave') {
       this.connectedUsers.delete(collaborationEvent.userId);
       this.triggerUsersChange();
     } else {
-      // Forward other events to listeners
       this.triggerEvent(collaborationEvent);
     }
   }
 
   private triggerEvent(event: CollaborationEvent) {
-    this.onEventCallbacks.forEach(callback => {
+    this.onEventCallbacks.forEach((callback) => {
       try {
         callback(event);
       } catch (error) {
@@ -426,11 +506,8 @@ class CollaborationService {
 
   private triggerUsersChange() {
     const users = this.getConnectedUsers();
-    if (this.currentUser) {
-      users.push(this.currentUser);
-    }
-    
-    this.onUsersChangeCallbacks.forEach(callback => {
+
+    this.onUsersChangeCallbacks.forEach((callback) => {
       try {
         callback(users);
       } catch (error) {
@@ -456,5 +533,4 @@ class CollaborationService {
   }
 }
 
-// Singleton instance
-export const collaborationService = new CollaborationService(); 
+export const collaborationService = new CollaborationService();
