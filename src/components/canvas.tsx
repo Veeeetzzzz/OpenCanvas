@@ -491,12 +491,20 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
 
   // --- Event Handlers --- 
 
-  const startDrawing = (event: React.MouseEvent<HTMLCanvasElement>) => {
+  const getCanvasPoint = (event: React.PointerEvent<HTMLCanvasElement>): Point => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  };
+
+  const startDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!context) return;
     cleanupToolStates(); // Call the restored cleanup function
 
-    const { offsetX, offsetY } = event.nativeEvent;
-    const point = { x: offsetX, y: offsetY };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const point = getCanvasPoint(event);
     setIsDrawing(true);
 
     if (tool === 'pencil' || tool === 'eraser') {
@@ -567,9 +575,9 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     }
   };
 
-  const draw = (e: React.MouseEvent) => {
+  const draw = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!context) return;
-    const point = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+    const point = getCanvasPoint(event);
     let currentHoveredHandle: string | null = null;
 
     if (isDrawing || isResizing || isDragging) {
@@ -678,7 +686,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
     setHoveredResizeHandle(currentHoveredHandle);
   };
 
-  const stopDrawing = () => { 
+  const stopDrawing = (event?: React.PointerEvent<HTMLCanvasElement>) => { 
+    event?.currentTarget.releasePointerCapture?.(event.pointerId);
     // Reset hover state on mouse up/leave
     setHoveredResizeHandle(null); 
 
@@ -968,10 +977,11 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>((
                         : 'cursor-default' // Hand tool, nothing selected: default
                 : 'cursor-crosshair' // Other tools: crosshair
             }`}
-            onMouseDown={startDrawing}
-            onMouseMove={draw}
-            onMouseUp={stopDrawing}
-            onMouseLeave={stopDrawing} // Handle mouse leaving canvas
+            style={{ touchAction: 'none' }}
+            onPointerDown={startDrawing}
+            onPointerMove={draw}
+            onPointerUp={stopDrawing}
+            onPointerCancel={stopDrawing}
             onDoubleClick={handleDoubleClick}
           />
         </ContextMenuTrigger>
